@@ -1,125 +1,367 @@
-import { useEffect, useState } from 'react';
-import { StyleSheet, Text, View, TouchableOpacity, Image, Alert } from 'react-native';
-import * as ImagePicker from 'expo-image-picker';
+import { useState, type ReactNode } from 'react';
+import { Alert, Platform, ScrollView, StatusBar, StyleSheet, View } from 'react-native';
+import { Button, Card, Divider, Text } from 'react-native-paper';
+import type { RegisteredUser } from '../storage/authStorage';
+import { brandColors } from '../theme';
 
-function ProfileAvatar({ initials = 'KS', imageUri, bgColor = '#3b82f6' }: { initials?: string; imageUri?: string | null; bgColor?: string }) {
-  if (imageUri) {
+interface ProfileScreenProps {
+  onDeleteAccount: () => Promise<void> | void;
+  onOpenRegistration: () => void;
+  onSignOut: () => Promise<void> | void;
+  user: RegisteredUser | null;
+}
+
+type ActivePage = 'history' | 'info' | 'main';
+const topSpacing = Platform.OS === 'android' ? (StatusBar.currentHeight ?? 0) + 12 : 44;
+const mainBottomSpacing = 32;
+const subPageBottomSpacing = 28;
+
+interface SubPageLayoutProps {
+  children: ReactNode;
+  onBack: () => void;
+  title: string;
+}
+
+function getDisplayValue(value: string): string {
+  return value.trim().length > 0 ? value : 'Ei saatavilla';
+}
+
+function getDisplayName(user: RegisteredUser): string {
+  const fullName = `${user.firstName} ${user.lastName}`.trim();
+  return fullName.length > 0 ? fullName : 'Ei saatavilla';
+}
+
+function SubPageLayout({ children, onBack, title }: SubPageLayoutProps) {
+  return (
+    <ScrollView contentContainerStyle={styles.subPageContent} showsVerticalScrollIndicator={false}>
+      <Button
+        icon="arrow-left"
+        mode="text"
+        onPress={onBack}
+        style={styles.backButton}
+        textColor={brandColors.forest}
+      >
+        Takaisin
+      </Button>
+
+      <Card mode="contained" style={styles.detailCard}>
+        <Card.Content>
+          <Text style={styles.sectionTitle} variant="titleMedium">
+            {title}
+          </Text>
+          {children}
+        </Card.Content>
+      </Card>
+    </ScrollView>
+  );
+}
+
+export default function ProfileScreen({
+  onDeleteAccount,
+  onOpenRegistration,
+  onSignOut,
+  user,
+}: ProfileScreenProps) {
+  const [activePage, setActivePage] = useState<ActivePage>('main');
+
+  const handleDeletePress = () => {
+    if (!user) {
+      Alert.alert(
+        'Tili\u00E4 ei ole',
+        'Tallennettua k\u00E4ytt\u00E4j\u00E4tili\u00E4 ei l\u00F6ytynyt poistettavaksi.'
+      );
+      return;
+    }
+
+    Alert.alert(
+      'Poista tili',
+      'Haluatko varmasti poistaa tallennetun tilin t\u00E4st\u00E4 laitteesta?',
+      [
+        {
+          text: 'Peruuta',
+          style: 'cancel',
+        },
+        {
+          text: 'Poista',
+          style: 'destructive',
+          onPress: () => {
+            void onDeleteAccount();
+          },
+        },
+      ]
+    );
+  };
+
+  const handleSignOutPress = () => {
+    Alert.alert('Kirjaudu ulos', 'Haluatko varmasti kirjautua ulos?', [
+      {
+        text: 'Peruuta',
+        style: 'cancel',
+      },
+      {
+        text: 'Kirjaudu ulos',
+        onPress: () => {
+          void onSignOut();
+        },
+      },
+    ]);
+  };
+
+  if (activePage === 'info') {
     return (
-      <View style={styles.avatarContainer}>
-        <Image source={{ uri: imageUri }} style={styles.avatarImage} />
-        <Text style={styles.avatarLabel}>Profiilikuva</Text>
-      </View>
+      <SubPageLayout onBack={() => setActivePage('main')} title={'Omat tiedot'}>
+        {user ? (
+          <>
+            <View style={styles.detailRow}>
+              <Text style={styles.label} variant="labelLarge">
+                Nimi
+              </Text>
+              <Text style={styles.value} variant="bodyLarge">
+                {getDisplayName(user)}
+              </Text>
+            </View>
+
+            <Divider style={styles.divider} />
+
+            <View style={styles.detailRow}>
+              <Text style={styles.label} variant="labelLarge">
+                {'K\u00E4ytt\u00E4j\u00E4nimi'}
+              </Text>
+              <Text style={styles.value} variant="bodyLarge">
+                {getDisplayValue(user.username)}
+              </Text>
+            </View>
+
+            <Divider style={styles.divider} />
+
+            <View style={styles.detailRow}>
+              <Text style={styles.label} variant="labelLarge">
+                {'S\u00E4hk\u00F6posti'}
+              </Text>
+              <Text style={styles.value} variant="bodyLarge">
+                {getDisplayValue(user.email)}
+              </Text>
+            </View>
+
+            <Divider style={styles.divider} />
+          </>
+        ) : (
+          <>
+            <Text style={styles.emptyText} variant="bodyMedium">
+              {'Tallennettuja k\u00E4ytt\u00E4j\u00E4tietoja ei l\u00F6ytynyt viel\u00E4.'}
+            </Text>
+            <Button
+              buttonColor={brandColors.mint}
+              mode="contained"
+              onPress={onOpenRegistration}
+              style={styles.inlineButton}
+              textColor={brandColors.forest}
+            >
+              {'Rekister\u00F6idy'}
+            </Button>
+          </>
+        )}
+
+        <Button
+          buttonColor="#C94F4F"
+          mode="contained"
+          onPress={handleDeletePress}
+          style={styles.detailDeleteButton}
+          textColor="#FFFFFF"
+        >
+          Poista tili
+        </Button>
+      </SubPageLayout>
+    );
+  }
+
+  if (activePage === 'history') {
+    return (
+      <SubPageLayout onBack={() => setActivePage('main')} title={'Tankkaushistoria'}>
+        <Text style={styles.emptyText} variant="bodyMedium">
+          {
+            'Tankkaushistoria lis\u00E4t\u00E4\u00E4n seuraavaksi. T\u00E4h\u00E4n n\u00E4kym\u00E4\u00E4n tulee my\u00F6hemmin listaus tankkaustapahtumista.'
+          }
+        </Text>
+      </SubPageLayout>
     );
   }
 
   return (
-    <View style={styles.avatarContainer}>
-      <View style={[styles.avatarCircle, { backgroundColor: bgColor }]}> 
-        <Text style={styles.avatarText}>{initials}</Text>
-      </View>
-      <Text style={styles.avatarLabel}>Profiilikuva</Text>
-    </View>
-  );
-}
+    <ScrollView contentContainerStyle={styles.mainContent} showsVerticalScrollIndicator={false}>
+      <Card mode="contained" style={styles.topCard}>
+        <Card.Content>
+          <Text style={styles.sectionTitle} variant="titleLarge">
+            {'Ajoneuvon tiedot'}
+          </Text>
 
-export default function ProfileScreen() {
-  const [selectedImage, setSelectedImage] = useState<string | null>(null);
+          <View style={styles.detailRow}>
+            <Text style={styles.label} variant="labelLarge">
+              {'Auton nimi'}
+            </Text>
+            <Text style={styles.value} variant="bodyLarge">
+              {'Ei asetettu'}
+            </Text>
+          </View>
 
-  useEffect(() => {
-    (async () => {
-      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-      if (status !== 'granted') {
-        Alert.alert('Lupa tarvitaan', 'Sallitaan gallerian käyttö, jotta profiilikuvaa voidaan vaihtaa.');
-      }
-    })();
-  }, []);
+          <Divider style={styles.divider} />
 
-  const pickImage = async () => {
-    try {
-      const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
-        quality: 0.7,
-        allowsEditing: true,
-        aspect: [1, 1],
-      });
+          <View style={styles.detailRow}>
+            <Text style={styles.label} variant="labelLarge">
+              {'Kulutus'}
+            </Text>
+            <Text style={styles.value} variant="bodyLarge">
+              {'Ei asetettu'}
+            </Text>
+          </View>
+        </Card.Content>
+      </Card>
 
-      if (!result.canceled) {
-        setSelectedImage(result.assets[0].uri);
-      }
-    } catch (error) {
-      console.error(error);
-      Alert.alert('Virhe', 'Kuvan valinta epäonnistui. Yritä uudelleen.');
-    }
-  };
+      <Card mode="contained" style={styles.savingsCard}>
+        <Card.Content>
+          <Text style={styles.sectionTitle} variant="titleMedium">
+            {'Olet s\u00E4\u00E4st\u00E4nyt'}
+          </Text>
 
-  return (
-    <View style={styles.container}>
-      <ProfileAvatar initials="KS" imageUri={selectedImage} />
+          <View style={styles.savingsRow}>
+            <Text style={styles.savingsValue} variant="headlineMedium">
+              {'44 \u20AC'}
+            </Text>
+            <Text style={styles.savingsLabel} variant="bodyMedium">
+              {'t\u00E4ss\u00E4 kuussa'}
+            </Text>
+          </View>
 
-      <TouchableOpacity style={styles.changeButton} onPress={pickImage}>
-        <Text style={styles.changeButtonText}>Valitse kuva</Text>
-      </TouchableOpacity>
+          <Divider style={styles.divider} />
 
-      <Text style={styles.title}>Profiili</Text>
-    </View>
+          <View style={styles.savingsRow}>
+            <Text style={styles.savingsValue} variant="headlineMedium">
+              {'255,5 \u20AC'}
+            </Text>
+            <Text style={styles.savingsLabel} variant="bodyMedium">
+              {'yhteens\u00E4'}
+            </Text>
+          </View>
+        </Card.Content>
+      </Card>
+
+      <Card mode="contained" style={styles.menuCard}>
+        <Card.Content>
+
+          <Button
+            buttonColor={brandColors.mint}
+            mode="contained"
+            onPress={() => setActivePage('info')}
+            style={styles.actionButton}
+            textColor={brandColors.forest}
+          >
+            {'Omat tiedot'}
+          </Button>
+
+          <Button
+            buttonColor={brandColors.softMint}
+            mode="contained"
+            onPress={() => setActivePage('history')}
+            style={styles.actionButton}
+            textColor={brandColors.forest}
+          >
+            {'Tankkaushistoria'}
+          </Button>
+
+          <Button
+            buttonColor="#7A9D8A"
+            mode="contained"
+            onPress={handleSignOutPress}
+            style={styles.actionButton}
+            textColor="#FFFFFF"
+          >
+            {'Kirjaudu ulos'}
+          </Button>
+        </Card.Content>
+      </Card>
+    </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#fff',
-    padding: 20,
+  mainContent: {
+    paddingHorizontal: 16,
+    paddingBottom: mainBottomSpacing,
+    paddingTop: topSpacing,
   },
-  title: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    marginBottom: 20,
+  subPageContent: {
+    paddingHorizontal: 16,
+    paddingBottom: subPageBottomSpacing,
+    paddingTop: topSpacing,
   },
-  avatarContainer: {
-    alignItems: 'center',
-    marginBottom: 20,
+  topCard: {
+    backgroundColor: '#F9FFFC',
+    borderRadius: 28,
   },
-  avatarCircle: {
-    width: 96,
-    height: 96,
-    borderRadius: 48,
-    backgroundColor: '#3b82f6',
-    justifyContent: 'center',
-    alignItems: 'center',
+  menuCard: {
+    backgroundColor: '#F9FFFC',
+    borderRadius: 28,
+    marginTop: 16,
   },
-  avatarImage: {
-    width: 96,
-    height: 96,
-    borderRadius: 48,
+  savingsCard: {
+    backgroundColor: '#F9FFFC',
+    borderRadius: 28,
+    marginTop: 16,
   },
-  avatarText: {
-    color: '#fff',
-    fontSize: 32,
-    fontWeight: 'bold',
+  detailCard: {
+    backgroundColor: '#F9FFFC',
+    borderRadius: 28,
   },
-  avatarLabel: {
-    marginTop: 8,
-    color: '#333',
+  sectionTitle: {
+    color: brandColors.forest,
+    fontWeight: '700',
+    marginBottom: 6,
   },
-  changeButton: {
-    backgroundColor: '#1d4ed8',
-    borderRadius: 8,
-    paddingVertical: 10,
-    paddingHorizontal: 14,
-    marginBottom: 20,
-    alignItems: 'center',
-  },
-  changeButtonText: {
-    color: '#fff',
-    fontWeight: '600',
+  detailRow: {
+    paddingVertical: 12,
   },
   label: {
-    fontSize: 16,
-    marginTop: 10,
-    color: '#555',
+    color: brandColors.forestSoft,
+    marginBottom: 4,
   },
   value: {
-    fontSize: 18,
+    color: brandColors.forest,
+  },
+  savingsRow: {
+    paddingVertical: 12,
+  },
+  savingsValue: {
+    color: brandColors.forest,
+    fontWeight: '700',
+  },
+  savingsLabel: {
+    color: brandColors.forestSoft,
+    marginTop: 4,
+  },
+  divider: {
+    backgroundColor: brandColors.lightMint,
+  },
+  actionButton: {
+    borderRadius: 16,
+    marginTop: 12,
+  },
+  detailDeleteButton: {
+    borderRadius: 16,
+    marginTop: 20,
+  },
+  emptyText: {
+    color: brandColors.forestSoft,
+    lineHeight: 22,
+    marginTop: 10,
+  },
+  inlineButton: {
+    alignSelf: 'flex-start',
+    borderRadius: 16,
+    marginTop: 16,
+  },
+  backButton: {
+    alignSelf: 'flex-start',
+    marginBottom: 12,
+    marginLeft: -8,
   },
 });
