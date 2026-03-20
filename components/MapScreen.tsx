@@ -10,40 +10,40 @@ export default function MapScreen() {
   const [location, setLocation] = useState<Region | null>(null);
 
   useEffect(() => {
-    getCurrentLocation()
-  }, [])
+    getCurrentLocation();
+  }, []);
 
-const getCurrentLocation = async (): Promise<void> => {
-  try {
-    const { status } = await Location.requestForegroundPermissionsAsync();
+  const getCurrentLocation = async (): Promise<void> => {
+    try {
+      const { status } = await Location.requestForegroundPermissionsAsync();
 
-    if (status !== 'granted') {
-      setLocation(null);
-      console.log('Permission denied', 'Location permission required to show current position');
-      return;
+      if (status !== 'granted') {
+        setLocation(null);
+        console.log('Permission denied', 'Location permission required to show current position');
+        return;
+      }
+
+      const currentLocation = await Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.High,
+      });
+
+      setLocation({
+        latitude: currentLocation.coords.latitude,
+        longitude: currentLocation.coords.longitude,
+        latitudeDelta: 0.05,
+        longitudeDelta: 0.03,
+      });
+    } catch (error) {
+      console.error(error);
     }
+  };
 
-    const currentLocation = await Location.getCurrentPositionAsync({
-      accuracy: Location.Accuracy.High,
-    });
-
-    setLocation({
-      latitude: currentLocation.coords.latitude,
-      longitude: currentLocation.coords.longitude,
-      latitudeDelta: 0.05,
-      longitudeDelta: 0.03,
-    })
-  } catch (error) {
-    console.error(error);
-  }
-}
-
-return (
-  <SafeAreaView style={styles.container}>
-    {location ? <Map region={location} /> : <ActivityIndicator size="large" />}
-    <StatusBar style="auto" />
-  </SafeAreaView>
-);
+  return (
+    <SafeAreaView style={styles.container}>
+      {location ? <Map region={location} /> : <ActivityIndicator size="large" />}
+      <StatusBar style="auto" />
+    </SafeAreaView>
+  );
 }
 
 const styles = StyleSheet.create({
