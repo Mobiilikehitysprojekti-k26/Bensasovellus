@@ -1,97 +1,94 @@
-import { useState } from 'react';
-import { Platform } from 'react-native';
-import { BottomNavigation } from 'react-native-paper';
+import { StyleSheet } from 'react-native';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import type { RegisteredUser } from '../storage/authStorage';
 import { brandColors } from '../theme';
 import MapScreen from './MapScreen';
 import PricesScreen from './Prices';
 import ProfileScreen from './Profile';
 
-const tabBarBottomPadding = Platform.OS === 'android' ? 12 : 20;
-
 interface MainTabsProps {
   onDeleteAccount: () => Promise<void> | void;
-  onOpenRegistration: () => void;
   onSignOut: () => Promise<void> | void;
   user: RegisteredUser | null;
 }
 
-type AppRoute = {
-  focusedIcon: string;
-  key: 'map' | 'prices' | 'profile';
-  title: string;
-  unfocusedIcon: string;
+type MainTabParamList = {
+  MapTab: undefined;
+  PricesTab: undefined;
+  ProfileTab: undefined;
 };
 
-const routes: AppRoute[] = [
-  {
-    key: 'map',
-    title: 'Kartta',
-    focusedIcon: 'map-marker-radius',
-    unfocusedIcon: 'map-marker-outline',
-  },
-  {
-    key: 'prices',
-    title: 'Hinnat',
-    focusedIcon: 'cash-multiple',
-    unfocusedIcon: 'cash',
-  },
-  {
-    key: 'profile',
-    title: 'Profiili',
-    focusedIcon: 'account-circle',
-    unfocusedIcon: 'account-outline',
-  },
-];
+const Tab = createBottomTabNavigator<MainTabParamList>();
 
-export default function MainTabs({
-  onDeleteAccount,
-  onOpenRegistration,
-  onSignOut,
-  user,
-}: MainTabsProps) {
-  const [index, setIndex] = useState(0);
-
-  const renderScene = ({ route }: { route: AppRoute }) => {
-    switch (route.key) {
-      case 'map':
-        return <MapScreen />;
-      case 'prices':
-        return <PricesScreen />;
-      case 'profile':
-        return (
-          <ProfileScreen
-            onDeleteAccount={onDeleteAccount}
-            onOpenRegistration={onOpenRegistration}
-            onSignOut={onSignOut}
-            user={user}
-          />
-        );
-      default:
-        return null;
-    }
-  };
-
+export default function MainTabs({ onDeleteAccount, onSignOut, user }: MainTabsProps) {
   return (
-    <BottomNavigation
-      activeColor={brandColors.forest}
-      barStyle={styles.bar}
-      inactiveColor={brandColors.forestSoft}
-      navigationState={{ index, routes }}
-      onIndexChange={setIndex}
-      renderScene={renderScene}
-      sceneAnimationEnabled
-      shifting={false}
-    />
+    <Tab.Navigator
+      initialRouteName="MapTab"
+      screenOptions={({ route }) => ({
+        headerShown: false,
+        tabBarActiveTintColor: brandColors.forest,
+        tabBarHideOnKeyboard: true,
+        tabBarInactiveTintColor: brandColors.forestSoft,
+        tabBarLabelStyle: styles.tabBarLabel,
+        tabBarStyle: styles.tabBar,
+        tabBarIcon: ({ color, focused, size }) => {
+          const iconName =
+            route.name === 'MapTab'
+              ? focused
+                ? 'map-marker-radius'
+                : 'map-marker-outline'
+              : route.name === 'PricesTab'
+                ? focused
+                  ? 'cash-multiple'
+                  : 'cash'
+                : focused
+                  ? 'account-circle'
+                  : 'account-outline';
+
+          return <MaterialCommunityIcons color={color} name={iconName} size={size} />;
+        },
+      })}
+    >
+      <Tab.Screen
+        component={MapScreen}
+        name="MapTab"
+        options={{
+          title: 'Kartta',
+        }}
+      />
+      <Tab.Screen
+        component={PricesScreen}
+        name="PricesTab"
+        options={{
+          title: 'Hinnat',
+        }}
+      />
+      <Tab.Screen
+        name="ProfileTab"
+        options={{
+          title: 'Profiili',
+        }}
+      >
+        {() => (
+          <ProfileScreen onDeleteAccount={onDeleteAccount} onSignOut={onSignOut} user={user} />
+        )}
+      </Tab.Screen>
+    </Tab.Navigator>
   );
 }
 
-const styles = {
-  bar: {
+const styles = StyleSheet.create({
+  tabBar: {
     backgroundColor: '#F6FFF9',
     borderTopColor: brandColors.lightMint,
     borderTopWidth: 1,
-    height: 74 + tabBarBottomPadding,
-    paddingBottom: tabBarBottomPadding,
+    height: 74,
+    paddingBottom: 10,
+    paddingTop: 8,
   },
-};
+  tabBarLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+  },
+});

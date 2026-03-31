@@ -1,6 +1,12 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import {
+  DefaultTheme as NavigationDefaultTheme,
+  NavigationContainer,
+  type Theme as NavigationTheme,
+} from '@react-navigation/native';
+import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { ActivityIndicator, PaperProvider } from 'react-native-paper';
 import LoginScreen from './components/LoginScreen';
@@ -19,13 +25,20 @@ import {
 } from './storage/authStorage';
 import { appTheme, brandColors } from './theme';
 
-type RootScreen = 'loading' | 'welcome' | 'login' | 'register' | 'app';
-type AuthBackTarget = 'app' | 'welcome';
+type AuthStatus = 'authenticated' | 'loading' | 'unauthenticated';
+
+type RootStackParamList = {
+  Login: undefined;
+  Main: undefined;
+  Register: undefined;
+  Welcome: undefined;
+};
+
+const Stack = createNativeStackNavigator<RootStackParamList>();
 
 export default function App() {
-  const [rootScreen, setRootScreen] = useState<RootScreen>('loading');
+  const [authStatus, setAuthStatus] = useState<AuthStatus>('loading');
   const [registeredUser, setRegisteredUser] = useState<RegisteredUser | null>(null);
-  const [authBackTarget, setAuthBackTarget] = useState<AuthBackTarget>('welcome');
 
   useEffect(() => {
     const loadStoredUser = async () => {
@@ -33,10 +46,10 @@ export default function App() {
         const user = await getRegisteredUser();
         const hasActiveSession = await getSessionActive();
         setRegisteredUser(user);
-        setRootScreen(user && hasActiveSession ? 'app' : 'welcome');
+        setAuthStatus(user && hasActiveSession ? 'authenticated' : 'unauthenticated');
       } catch (error) {
         console.error('Failed to load registered user', error);
-        setRootScreen('welcome');
+        setAuthStatus('unauthenticated');
       }
     };
 
@@ -48,7 +61,7 @@ export default function App() {
     await clearAuthToken();
     await setSessionActive(true);
     setRegisteredUser(user);
-    setRootScreen('app');
+    setAuthStatus('authenticated');
   };
 
   const handleLoginComplete = async (user: RegisteredUser, token?: string) => {
@@ -60,13 +73,13 @@ export default function App() {
     }
     await setSessionActive(true);
     setRegisteredUser(user);
-    setRootScreen('app');
+    setAuthStatus('authenticated');
   };
 
   const handleSignOut = async () => {
     await clearAuthToken();
     await setSessionActive(false);
-    setRootScreen('welcome');
+    setAuthStatus('unauthenticated');
   };
 
   const handleDeleteAccount = async () => {
@@ -74,62 +87,24 @@ export default function App() {
     await clearAuthToken();
     await setSessionActive(false);
     setRegisteredUser(null);
-    setRootScreen('welcome');
+    setAuthStatus('unauthenticated');
   };
 
-  const handleLoginPress = () => {
-    setAuthBackTarget('welcome');
-    setRootScreen('login');
-  };
-
-  const renderRootScreen = () => {
-    switch (rootScreen) {
-      case 'loading':
-        return (
-          <View style={styles.loadingContainer}>
-            <ActivityIndicator animating size="large" color={brandColors.forest} />
-          </View>
-        );
-      case 'register':
-        return (
-          <RegistrationScreen
-            onBack={() => setRootScreen(authBackTarget)}
-            onRegistered={handleRegistrationComplete}
-          />
-        );
-      case 'login':
-        return (
-          <LoginScreen
-            onBack={() => setRootScreen('welcome')}
-            onLoggedIn={handleLoginComplete}
-            storedUser={registeredUser}
-          />
-        );
-      case 'app':
-        return (
-          <MainTabs
-            onDeleteAccount={handleDeleteAccount}
-            onSignOut={handleSignOut}
-            user={registeredUser}
-            onOpenRegistration={() => {
-              setAuthBackTarget('app');
-              setRootScreen('register');
-            }}
-          />
-        );
-      case 'welcome':
-      default:
-        return (
-          <WelcomeScreen
-            onLogin={handleLoginPress}
-            onRegister={() => {
-              setAuthBackTarget('welcome');
-              setRootScreen('register');
-            }}
-          />
-        );
-    }
-  };
+  const navigationTheme = useMemo<NavigationTheme>(
+    () => ({
+      ...NavigationDefaultTheme,
+      colors: {
+        ...NavigationDefaultTheme.colors,
+        background: appTheme.colors.background,
+        border: brandColors.lightMint,
+        card: '#F6FFF9',
+        notification: brandColors.mint,
+        primary: brandColors.forest,
+        text: brandColors.forest,
+      },
+    }),
+    []
+  );
 
   return (
     <SafeAreaProvider>
@@ -147,7 +122,55 @@ export default function App() {
           ),
         }}
       >
-        {renderRootScreen()}
+        {authStatus === 'loading' ? (
+          <View style={styles.loadingContainer}>
+            <ActivityIndicator animating size="large" color={brandColors.forest} />
+          </View>
+        ) : (
+          <NavigationContainer theme={navigationTheme}>
+            <Stack.Navigator screenOptions={{ headerShown: false }}>
+              {authStatus === 'authenticated' ? (
+                <Stack.Screen name="Main">
+                  {() => (
+                    <MainTabs
+                      onDeleteAccount={handleDeleteAccount}
+                      onSignOut={handleSignOut}
+                      user={registeredUser}
+                    />
+                  )}
+                </Stack.Screen>
+              ) : (
+                <>
+                  <Stack.Screen name="Welcome">
+                    {({ navigation }) => (
+                      <WelcomeScreen
+                        onLogin={() => navigation.navigate('Login')}
+                        onRegister={() => navigation.navigate('Register')}
+                      />
+                    )}
+                  </Stack.Screen>
+                  <Stack.Screen name="Login">
+                    {({ navigation }) => (
+                      <LoginScreen
+                        onBack={navigation.goBack}
+                        onLoggedIn={handleLoginComplete}
+                        storedUser={registeredUser}
+                      />
+                    )}
+                  </Stack.Screen>
+                  <Stack.Screen name="Register">
+                    {({ navigation }) => (
+                      <RegistrationScreen
+                        onBack={navigation.goBack}
+                        onRegistered={handleRegistrationComplete}
+                      />
+                    )}
+                  </Stack.Screen>
+                </>
+              )}
+            </Stack.Navigator>
+          </NavigationContainer>
+        )}
       </PaperProvider>
     </SafeAreaProvider>
   );

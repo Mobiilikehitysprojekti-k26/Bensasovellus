@@ -6,7 +6,6 @@ import { brandColors } from '../theme';
 
 interface ProfileScreenProps {
   onDeleteAccount: () => Promise<void> | void;
-  onOpenRegistration: () => void;
   onSignOut: () => Promise<void> | void;
   user: RegisteredUser | null;
 }
@@ -58,7 +57,6 @@ function SubPageLayout({ children, onBack, title }: SubPageLayoutProps) {
 
 export default function ProfileScreen({
   onDeleteAccount,
-  onOpenRegistration,
   onSignOut,
   user,
 }: ProfileScreenProps) {
@@ -146,20 +144,9 @@ export default function ProfileScreen({
             <Divider style={styles.divider} />
           </>
         ) : (
-          <>
-            <Text style={styles.emptyText} variant="bodyMedium">
-              {'Tallennettuja k\u00E4ytt\u00E4j\u00E4tietoja ei l\u00F6ytynyt viel\u00E4.'}
-            </Text>
-            <Button
-              buttonColor={brandColors.mint}
-              mode="contained"
-              onPress={onOpenRegistration}
-              style={styles.inlineButton}
-              textColor={brandColors.forest}
-            >
-              {'Rekister\u00F6idy'}
-            </Button>
-          </>
+          <Text style={styles.emptyText} variant="bodyMedium">
+            {'Tallennettuja k\u00E4ytt\u00E4j\u00E4tietoja ei l\u00F6ytynyt viel\u00E4.'}
+          </Text>
         )}
 
         <Button
@@ -353,11 +340,6 @@ const styles = StyleSheet.create({
     color: brandColors.forestSoft,
     lineHeight: 22,
     marginTop: 10,
-  },
-  inlineButton: {
-    alignSelf: 'flex-start',
-    borderRadius: 16,
-    marginTop: 16,
   },
   backButton: {
     alignSelf: 'flex-start',
