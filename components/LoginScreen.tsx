@@ -125,7 +125,7 @@ function extractUser(
 }
 
 export default function LoginScreen({
-  onBack: _onBack,
+  onBack,
   onLoggedIn,
   storedUser,
 }: LoginScreenProps) {
@@ -244,6 +244,10 @@ export default function LoginScreen({
               textColor={brandColors.forest}
             >
               Kirjaudu
+            </Button>
+
+            <Button mode="text" onPress={onBack} textColor={brandColors.forestSoft}>
+              Takaisin
             </Button>
           </Surface>
         </View>
