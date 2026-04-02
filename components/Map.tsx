@@ -80,7 +80,8 @@ export default function Map({
           maximumZ={19}
           shouldReplaceMapContent={Platform.OS === 'ios'}
           tileSize={256}
-          urlTemplate="https://tile.openstreetmap.org/{z}/{x}/{y}.png"
+          // Väliaikainen korjaus mappiin
+          urlTemplate="https://a.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png"
         />
 
         {currentLocation ? (
