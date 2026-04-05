@@ -1,7 +1,16 @@
 import type { RefObject } from 'react';
-import { ActivityIndicator, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import {
+  ActivityIndicator,
+  Platform,
+  Pressable,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import MapView, { Marker, Polyline, UrlTile, type LatLng } from 'react-native-maps';
+import type { RecommendedFuelStop } from '../services/fuelRouting';
 import { brandColors } from '../theme';
 
 interface MapProps {
@@ -11,18 +20,25 @@ interface MapProps {
   destinationLabel: string;
   distanceLabel: string;
   durationLabel: string;
+  fuelStopRecommendation: RecommendedFuelStop | null;
+  fuelStopSummary: string | null;
+  hasVisitedFuelStop: boolean;
   initialCenter: LatLng;
+  isFindingFuelStop: boolean;
   isFollowing: boolean;
   isLoadingRoute: boolean;
   isNavigating: boolean;
   locationError: string | null;
   mapRef: RefObject<MapView | null>;
+  navigationTargetLabel: string;
   onAddressChange: (value: string) => void;
   onLongPressMap: (coordinate: LatLng) => void;
   onPanMap: () => void;
   onRecenter: () => void;
   onSearchRoute: () => void;
   onToggleNavigation: () => void;
+  routeBannerSubtitle: string;
+  routeBannerTitle: string;
   routeCoords: LatLng[];
   speedLabel: string;
 }
@@ -39,23 +55,31 @@ export default function Map({
   destinationLabel,
   distanceLabel,
   durationLabel,
+  fuelStopRecommendation,
+  fuelStopSummary,
+  hasVisitedFuelStop,
   initialCenter,
+  isFindingFuelStop,
   isFollowing,
   isLoadingRoute,
   isNavigating,
   locationError,
   mapRef,
+  navigationTargetLabel,
   onAddressChange,
   onLongPressMap,
   onPanMap,
   onRecenter,
   onSearchRoute,
   onToggleNavigation,
+  routeBannerSubtitle,
+  routeBannerTitle,
   routeCoords,
   speedLabel,
 }: MapProps) {
   const hasRoute = routeCoords.length > 1;
   const canSearch = address.trim().length > 0 && !isLoadingRoute;
+  const showFuelStopMarker = Boolean(fuelStopRecommendation) && !hasVisitedFuelStop;
 
   return (
     <View style={styles.container}>
@@ -80,12 +104,11 @@ export default function Map({
           maximumZ={19}
           shouldReplaceMapContent={Platform.OS === 'ios'}
           tileSize={256}
-          // Väliaikainen korjaus mappiin
           urlTemplate="https://a.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png"
         />
 
         {currentLocation ? (
-          <Marker coordinate={currentLocation} title="Sinä" tracksViewChanges={false}>
+          <Marker coordinate={currentLocation} title="Sina" tracksViewChanges={false}>
             <View style={styles.userMarkerOuter}>
               <View style={styles.userMarkerInner} />
             </View>
@@ -96,6 +119,19 @@ export default function Map({
           <Marker coordinate={destination} title={destinationLabel} tracksViewChanges={false}>
             <View style={styles.destinationMarkerOuter}>
               <MaterialCommunityIcons color="#FFFFFF" name="map-marker" size={16} />
+            </View>
+          </Marker>
+        ) : null}
+
+        {showFuelStopMarker && fuelStopRecommendation ? (
+          <Marker
+            coordinate={fuelStopRecommendation.coordinate}
+            description={fuelStopSummary ?? undefined}
+            title={fuelStopRecommendation.stationName}
+            tracksViewChanges={false}
+          >
+            <View style={styles.fuelMarkerOuter}>
+              <MaterialCommunityIcons color="#FFFFFF" name="gas-station" size={16} />
             </View>
           </Marker>
         ) : null}
@@ -127,7 +163,7 @@ export default function Map({
               <MaterialCommunityIcons color="#FFFFFF" name="navigation-variant" size={18} />
             </View>
             <Text numberOfLines={1} style={styles.navigationTopText}>
-              {destinationLabel}
+              {navigationTargetLabel}
             </Text>
           </View>
         ) : (
@@ -139,7 +175,7 @@ export default function Map({
                 autoCorrect={false}
                 onChangeText={onAddressChange}
                 onSubmitEditing={onSearchRoute}
-                placeholder="Syötä määränpään osoite"
+                placeholder="Minne matka?"
                 placeholderTextColor="#94A3B8"
                 returnKeyType="search"
                 style={styles.searchInput}
@@ -168,17 +204,13 @@ export default function Map({
         {hasRoute && !isNavigating ? (
           <View style={styles.routeBanner}>
             <View style={styles.routeBannerIcon}>
-              <MaterialCommunityIcons
-                color="#FFFFFF"
-                name="directions"
-                size={18}
-              />
+              <MaterialCommunityIcons color="#FFFFFF" name="directions" size={18} />
             </View>
             <View style={styles.routeBannerContent}>
               <Text numberOfLines={1} style={styles.routeBannerTitle}>
-                {destinationLabel}
+                {routeBannerTitle}
               </Text>
-              <Text style={styles.routeBannerSubtitle}>{`${distanceLabel} · ${durationLabel}`}</Text>
+              <Text style={styles.routeBannerSubtitle}>{routeBannerSubtitle}</Text>
             </View>
           </View>
         ) : null}
@@ -193,7 +225,7 @@ export default function Map({
         <View style={styles.bottomCard}>
           <View style={styles.metricsRow}>
             <View style={styles.metricBox}>
-              <Text style={styles.metricLabel}>Etäisyys</Text>
+              <Text style={styles.metricLabel}>Matka</Text>
               <Text style={styles.metricValue}>{distanceLabel}</Text>
             </View>
             <View style={styles.metricDivider} />
@@ -204,6 +236,12 @@ export default function Map({
           </View>
 
           <Text style={styles.subMetrics}>Nopeus: {speedLabel} km/h</Text>
+
+          {isFindingFuelStop ? (
+            <Text style={styles.fuelInfoText}>Etsitaan paras tankkausasema...</Text>
+          ) : fuelStopSummary ? (
+            <Text style={styles.fuelInfoText}>{fuelStopSummary}</Text>
+          ) : null}
 
           <Pressable
             disabled={!hasRoute || isLoadingRoute}
@@ -233,9 +271,9 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     bottom: 14,
     left: 12,
+    paddingBottom: 12,
     paddingHorizontal: 14,
     paddingTop: 14,
-    paddingBottom: 12,
     position: 'absolute',
     right: 12,
   },
@@ -255,6 +293,20 @@ const styles = StyleSheet.create({
     color: '#B91C1C',
     fontSize: 13,
     marginTop: 8,
+  },
+  fuelInfoText: {
+    color: brandColors.forestSoft,
+    fontSize: 13,
+    lineHeight: 18,
+    marginTop: 8,
+  },
+  fuelMarkerOuter: {
+    alignItems: 'center',
+    backgroundColor: '#0F766E',
+    borderRadius: 14,
+    height: 28,
+    justifyContent: 'center',
+    width: 28,
   },
   map: {
     flex: 1,

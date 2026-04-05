@@ -23,6 +23,7 @@ import {
   setSessionActive,
   type RegisteredUser,
 } from './storage/authStorage';
+import { clearProfilePreferences } from './storage/profileStorage';
 import { appTheme, brandColors } from './theme';
 
 type AuthStatus = 'authenticated' | 'loading' | 'unauthenticated';
@@ -83,6 +84,9 @@ export default function App() {
   };
 
   const handleDeleteAccount = async () => {
+    if (registeredUser?.email) {
+      await clearProfilePreferences(registeredUser.email);
+    }
     await clearRegisteredUser();
     await clearAuthToken();
     await setSessionActive(false);
