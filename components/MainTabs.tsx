@@ -51,12 +51,13 @@ export default function MainTabs({ onDeleteAccount, onSignOut, user }: MainTabsP
       })}
     >
       <Tab.Screen
-        component={MapScreen}
         name="MapTab"
         options={{
           title: 'Kartta',
         }}
-      />
+      >
+        {() => <MapScreen user={user} />}
+      </Tab.Screen>
       <Tab.Screen
         component={PricesScreen}
         name="PricesTab"

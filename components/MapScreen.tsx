@@ -6,10 +6,31 @@ import type { LatLng } from 'react-native-maps';
 import MapView from 'react-native-maps';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Card, Text } from 'react-native-paper';
-import Map from './Map';
+import type { RegisteredUser } from '../storage/authStorage';
+import {
+  createDefaultProfilePreferences,
+  getProfilePreferences,
+  type ProfilePreferences,
+} from '../storage/profileStorage';
+import {
+  findBestFuelStop,
+  formatExtraDistance,
+  formatFuelPrice,
+  isArrivedAtFuelStop,
+  type RecommendedFuelStop,
+} from '../services/fuelRouting';
 import { geocodeAddress } from '../services/geocode';
-import { fetchDrivingRoute } from '../services/routing';
+import {
+  fetchDrivingRoute,
+  fetchDrivingRouteWithWaypoints,
+  type DrivingRoute,
+} from '../services/routing';
 import { brandColors } from '../theme';
+import Map from './Map';
+
+interface MapScreenProps {
+  user: RegisteredUser | null;
+}
 
 const fallbackCenter = {
   latitude: 60.1699,
@@ -146,7 +167,49 @@ function formatDurationLabel(durationSeconds: number | null): string {
   return `${Math.round(durationSeconds / 60)} min`;
 }
 
-export default function MapScreen() {
+function getCombinedConsumptionValue(preferences: ProfilePreferences): number | null {
+  const normalizedValue = preferences.combinedConsumption.trim().replace(',', '.');
+  const parsedValue = Number(normalizedValue);
+
+  if (!Number.isFinite(parsedValue) || parsedValue <= 0) {
+    return null;
+  }
+
+  return parsedValue;
+}
+
+function createNavigationTargetLabel(
+  destinationLabel: string,
+  recommendedFuelStop: RecommendedFuelStop | null,
+  hasVisitedFuelStop: boolean
+): string {
+  if (recommendedFuelStop && !hasVisitedFuelStop) {
+    return `Tankkaa: ${recommendedFuelStop.stationName}`;
+  }
+
+  return destinationLabel;
+}
+
+function createFuelStopSummary(
+  destinationLabel: string,
+  recommendedFuelStop: RecommendedFuelStop | null,
+  hasVisitedFuelStop: boolean,
+  isFindingFuelStop: boolean
+): string | null {
+  if (isFindingFuelStop) {
+    return 'Lasketaan paras tankkausasema reitille...';
+  }
+
+  if (!recommendedFuelStop || hasVisitedFuelStop) {
+    return null;
+  }
+
+  return `${recommendedFuelStop.stationName} • ${formatFuelPrice(
+    recommendedFuelStop.price
+  )} • ${formatExtraDistance(recommendedFuelStop.detourDistanceMeters)} • sitten ${destinationLabel}`;
+}
+
+export default function MapScreen({ user }: MapScreenProps) {
   const mapRef = useRef<MapView | null>(null);
   const watchRef = useRef<Location.LocationSubscription | null>(null);
   const headingWatchRef = useRef<Location.LocationSubscription | null>(null);
@@ -158,16 +221,19 @@ export default function MapScreen() {
   const isFollowingRef = useRef(true);
   const headingRef = useRef<number | null>(null);
   const currentLocationRef = useRef<LatLng | null>(null);
+  const recommendedFuelStopRef = useRef<RecommendedFuelStop | null>(null);
+  const hasVisitedFuelStopRef = useRef(false);
 
   const lastCameraAtRef = useRef(0);
   const lastRouteRefreshAtRef = useRef(0);
   const routeFetchInFlightRef = useRef(false);
   const navigationCameraLockedRef = useRef(false);
+  const routeRequestIdRef = useRef(0);
 
   const [address, setAddress] = useState('');
   const [currentLocation, setCurrentLocation] = useState<LatLng | null>(null);
   const [destination, setDestination] = useState<LatLng | null>(null);
-  const [destinationLabel, setDestinationLabel] = useState('Määränpää');
+  const [destinationLabel, setDestinationLabel] = useState('Maaranpaa');
   const [routeCoords, setRouteCoords] = useState<LatLng[]>([]);
   const [distanceMeters, setDistanceMeters] = useState<number | null>(null);
   const [durationSeconds, setDurationSeconds] = useState<number | null>(null);
@@ -178,11 +244,14 @@ export default function MapScreen() {
   const [isFollowing, setIsFollowing] = useState(true);
   const [locationError, setLocationError] = useState<string | null>(null);
   const [isLocating, setIsLocating] = useState(true);
-
-  const routeRenderCoords = useMemo(
-    () => simplifyPolylineForRender(routeCoords),
-    [routeCoords]
+  const [profilePreferences, setProfilePreferences] = useState<ProfilePreferences>(
+    createDefaultProfilePreferences()
   );
+  const [recommendedFuelStop, setRecommendedFuelStop] = useState<RecommendedFuelStop | null>(null);
+  const [hasVisitedFuelStop, setHasVisitedFuelStop] = useState(false);
+  const [isFindingFuelStop, setIsFindingFuelStop] = useState(false);
+
+  const routeRenderCoords = useMemo(() => simplifyPolylineForRender(routeCoords), [routeCoords]);
 
   useEffect(() => {
     destinationRef.current = destination;
@@ -208,9 +277,50 @@ export default function MapScreen() {
     currentLocationRef.current = currentLocation;
   }, [currentLocation]);
 
-  const updateRoute = async (from: LatLng, to: LatLng, fitOnMap: boolean = true) => {
-    const route = await fetchDrivingRoute(from, to);
+  useEffect(() => {
+    recommendedFuelStopRef.current = recommendedFuelStop;
+  }, [recommendedFuelStop]);
 
+  useEffect(() => {
+    hasVisitedFuelStopRef.current = hasVisitedFuelStop;
+  }, [hasVisitedFuelStop]);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const loadProfilePreferences = async () => {
+      if (!user?.email) {
+        if (isMounted) {
+          setProfilePreferences(createDefaultProfilePreferences());
+        }
+        return;
+      }
+
+      try {
+        const storedPreferences = await getProfilePreferences(user.email);
+
+        if (!isMounted) {
+          return;
+        }
+
+        setProfilePreferences(storedPreferences ?? createDefaultProfilePreferences());
+      } catch (error) {
+        console.error('Failed to load stored profile preferences', error);
+
+        if (isMounted) {
+          setProfilePreferences(createDefaultProfilePreferences());
+        }
+      }
+    };
+
+    void loadProfilePreferences();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [user?.email]);
+
+  const applyRoute = (route: DrivingRoute, fitOnMap: boolean = true) => {
     setRouteCoords(route.geometry);
     setDistanceMeters(route.distanceMeters);
     setDurationSeconds(route.durationSeconds);
@@ -222,7 +332,22 @@ export default function MapScreen() {
         edgePadding: { top: 100, right: 32, bottom: 190, left: 32 },
       });
     }
+  };
 
+  const updateRoute = async (
+    from: LatLng,
+    to: LatLng,
+    fitOnMap: boolean = true,
+    overrideFuelStop: RecommendedFuelStop | null = recommendedFuelStopRef.current,
+    overrideHasVisitedFuelStop: boolean = hasVisitedFuelStopRef.current
+  ) => {
+    const routePoints =
+      overrideFuelStop && !overrideHasVisitedFuelStop
+        ? [from, overrideFuelStop.coordinate, to]
+        : [from, to];
+
+    const route = await fetchDrivingRouteWithWaypoints(routePoints);
+    applyRoute(route, fitOnMap);
     return route;
   };
 
@@ -256,13 +381,99 @@ export default function MapScreen() {
     }
   };
 
+  const handleFuelStopArrival = async (userPoint: LatLng) => {
+    const activeFuelStop = recommendedFuelStopRef.current;
+
+    if (!activeFuelStop || hasVisitedFuelStopRef.current || !destinationRef.current) {
+      return false;
+    }
+
+    if (!isArrivedAtFuelStop(userPoint, activeFuelStop.coordinate)) {
+      return false;
+    }
+
+    hasVisitedFuelStopRef.current = true;
+    setHasVisitedFuelStop(true);
+
+    Alert.alert(
+      'Tankkausasema saavutettu',
+      `Saavuit asemalle ${activeFuelStop.stationName}. Reitti jatkuu maaranpaahan.`
+    );
+
+    try {
+      routeFetchInFlightRef.current = true;
+      await updateRoute(userPoint, destinationRef.current, false, activeFuelStop, true);
+    } catch (error) {
+      console.error('Failed to continue route after fuel stop', error);
+    } finally {
+      routeFetchInFlightRef.current = false;
+    }
+
+    return true;
+  };
+
+  const planRouteWithOptionalFuelStop = async (
+    from: LatLng,
+    to: LatLng,
+    fitOnMap: boolean = true
+  ) => {
+    const requestId = routeRequestIdRef.current + 1;
+    routeRequestIdRef.current = requestId;
+
+    setRecommendedFuelStop(null);
+    recommendedFuelStopRef.current = null;
+    setHasVisitedFuelStop(false);
+    hasVisitedFuelStopRef.current = false;
+    setIsFindingFuelStop(false);
+
+    const directRoute = await fetchDrivingRoute(from, to);
+
+    if (requestId !== routeRequestIdRef.current) {
+      return;
+    }
+
+    applyRoute(directRoute, fitOnMap);
+
+    const combinedConsumption = getCombinedConsumptionValue(profilePreferences);
+
+    if (!profilePreferences.fuelType || combinedConsumption === null) {
+      return;
+    }
+
+    setIsFindingFuelStop(true);
+
+    try {
+      const bestFuelStop = await findBestFuelStop({
+        baseRoute: directRoute,
+        combinedConsumption,
+        currentLocation: from,
+        destination: to,
+        fuelType: profilePreferences.fuelType,
+      });
+
+      if (requestId !== routeRequestIdRef.current || !bestFuelStop) {
+        return;
+      }
+
+      setRecommendedFuelStop(bestFuelStop);
+      recommendedFuelStopRef.current = bestFuelStop;
+      applyRoute(bestFuelStop.route, fitOnMap);
+    } catch (error) {
+      console.error('Failed to calculate best fuel stop', error);
+    } finally {
+      if (requestId === routeRequestIdRef.current) {
+        setIsFindingFuelStop(false);
+      }
+    }
+  };
+
   useEffect(() => {
     const startTracking = async () => {
       try {
         const permission = await Location.requestForegroundPermissionsAsync();
 
         if (permission.status !== 'granted') {
-          setLocationError('Sijaintilupaa ei myönnetty.');
+          setLocationError('Sijaintilupaa ei myonnetty.');
           setIsLocating(false);
           return;
         }
@@ -313,7 +524,11 @@ export default function MapScreen() {
             setSpeedKmh(shouldFreeze ? 0 : speedMps * 3.6);
 
             if (destinationRef.current) {
-              await maybeRefreshRoute(userPoint);
+              const handledFuelStopArrival = await handleFuelStopArrival(userPoint);
+
+              if (!handledFuelStopArrival) {
+                await maybeRefreshRoute(userPoint);
+              }
             }
 
             if (
@@ -339,7 +554,7 @@ export default function MapScreen() {
                 setIsNavigating(false);
                 setIsFollowing(true);
                 navigationCameraLockedRef.current = false;
-                Alert.alert('Perillä', 'Saavuit määränpäähän.');
+                Alert.alert('Perilla', 'Saavuit maaranpaahan.');
               }
             }
           }
@@ -356,7 +571,7 @@ export default function MapScreen() {
         });
       } catch (error) {
         console.error('Location setup failed', error);
-        setLocationError('Sijainnin haku epäonnistui.');
+        setLocationError('Sijainnin haku epaonnistui.');
         setIsLocating(false);
       }
     };
@@ -395,7 +610,7 @@ export default function MapScreen() {
     }
 
     if (!currentLocationRef.current) {
-      Alert.alert('Sijainti puuttuu', 'Odota hetki, käyttäjän sijaintia haetaan.');
+      Alert.alert('Sijainti puuttuu', 'Odota hetki, kayttajan sijaintia haetaan.');
       return;
     }
 
@@ -408,15 +623,17 @@ export default function MapScreen() {
       const destinationCoords = await geocodeAddress(address);
       setDestination(destinationCoords);
       setDestinationLabel(address.trim());
-      await updateRoute(currentLocationRef.current, destinationCoords, true);
+      await planRouteWithOptionalFuelStop(currentLocationRef.current, destinationCoords, true);
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Reitin haku epäonnistui.';
+      const message = error instanceof Error ? error.message : 'Reitin haku epaonnistui.';
       setLocationError(message);
       Alert.alert('Virhe', message);
       setRouteCoords([]);
       setDistanceMeters(null);
       setDurationSeconds(null);
       setDestination(null);
+      setRecommendedFuelStop(null);
+      setHasVisitedFuelStop(false);
       setIsNavigating(false);
     } finally {
       setIsLoadingRoute(false);
@@ -436,15 +653,17 @@ export default function MapScreen() {
     setDestinationLabel('Valittu kohde');
 
     try {
-      await updateRoute(currentLocationRef.current, coordinate, true);
+      await planRouteWithOptionalFuelStop(currentLocationRef.current, coordinate, true);
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Reitin haku epäonnistui.';
+      const message = error instanceof Error ? error.message : 'Reitin haku epaonnistui.';
       setLocationError(message);
       Alert.alert('Virhe', message);
       setRouteCoords([]);
       setDistanceMeters(null);
       setDurationSeconds(null);
       setDestination(null);
+      setRecommendedFuelStop(null);
+      setHasVisitedFuelStop(false);
     } finally {
       setIsLoadingRoute(false);
     }
@@ -491,14 +710,12 @@ export default function MapScreen() {
 
     if (isNavigating) {
       navigationCameraLockedRef.current = true;
-      mapRef.current.setCamera(
-        {
-          center: currentLocationRef.current,
-          heading: heading ?? 0,
-          pitch: navigationPitch,
-          zoom: navigationZoom,
-        }
-      );
+      mapRef.current.setCamera({
+        center: currentLocationRef.current,
+        heading: heading ?? 0,
+        pitch: navigationPitch,
+        zoom: navigationZoom,
+      });
       lastCameraAtRef.current = Date.now();
       return;
     }
@@ -518,6 +735,21 @@ export default function MapScreen() {
   const durationLabel = formatDurationLabel(durationSeconds);
   const speedLabel = Math.round(speedKmh).toString();
   const initialCenter = currentLocation ?? fallbackCenter;
+  const navigationTargetLabel = createNavigationTargetLabel(
+    destinationLabel,
+    recommendedFuelStop,
+    hasVisitedFuelStop
+  );
+  const fuelStopSummary = createFuelStopSummary(
+    destinationLabel,
+    recommendedFuelStop,
+    hasVisitedFuelStop,
+    isFindingFuelStop
+  );
+  const routeBannerTitle =
+    recommendedFuelStop && !hasVisitedFuelStop ? recommendedFuelStop.stationName : destinationLabel;
+  const routeBannerSubtitle =
+    fuelStopSummary ?? `${distanceLabel} · ${durationLabel}`;
 
   return (
     <SafeAreaView edges={['top', 'left', 'right']} style={styles.container}>
@@ -538,12 +770,17 @@ export default function MapScreen() {
           destinationLabel={destinationLabel}
           distanceLabel={distanceLabel}
           durationLabel={durationLabel}
+          fuelStopRecommendation={recommendedFuelStop}
+          fuelStopSummary={fuelStopSummary}
+          hasVisitedFuelStop={hasVisitedFuelStop}
           initialCenter={initialCenter}
+          isFindingFuelStop={isFindingFuelStop}
           isFollowing={isFollowing}
           isLoadingRoute={isLoadingRoute}
           isNavigating={isNavigating}
           locationError={locationError}
           mapRef={mapRef}
+          navigationTargetLabel={navigationTargetLabel}
           onAddressChange={setAddress}
           onLongPressMap={(coordinate) => {
             void handleSelectDestination(coordinate);
@@ -558,6 +795,8 @@ export default function MapScreen() {
             void handleSearchRoute();
           }}
           onToggleNavigation={handleToggleNavigation}
+          routeBannerSubtitle={routeBannerSubtitle}
+          routeBannerTitle={routeBannerTitle}
           routeCoords={routeRenderCoords}
           speedLabel={speedLabel}
         />
@@ -571,7 +810,7 @@ export default function MapScreen() {
                 Sijaintia ei saatu
               </Text>
               <Text style={styles.errorBody} variant="bodyMedium">
-                {locationError ?? 'Sijainti ei ole vielä saatavilla.'}
+                {locationError ?? 'Sijainti ei ole viela saatavilla.'}
               </Text>
             </Card.Content>
           </Card>

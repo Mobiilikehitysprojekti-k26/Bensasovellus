@@ -1,13 +1,20 @@
 import type { LatLng } from 'react-native-maps';
+import { createOpenRouteServiceGeocodeUrl } from './openRouteService';
 
-type NominatimResult = {
-  lat: string;
-  lon: string;
+type OpenRouteServiceGeocodeResponse = {
+  features?: Array<{
+    geometry?: {
+      coordinates?: [number, number];
+    };
+  }>;
 };
 
 export async function geocodeAddress(address: string): Promise<LatLng> {
-  const encodedAddress = encodeURIComponent(address.trim());
-  const url = `https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodedAddress}`;
+  const url = createOpenRouteServiceGeocodeUrl({
+    boundaryCountry: 'FI',
+    size: 1,
+    text: address.trim(),
+  });
 
   const response = await fetch(url, {
     headers: {
@@ -19,16 +26,15 @@ export async function geocodeAddress(address: string): Promise<LatLng> {
     throw new Error('Geokoodaus epäonnistui. Yritä hetken kuluttua uudelleen.');
   }
 
-  const results = (await response.json()) as NominatimResult[];
+  const data = (await response.json()) as OpenRouteServiceGeocodeResponse;
+  const coordinates = data.features?.[0]?.geometry?.coordinates;
 
-  if (!results.length) {
+  if (!coordinates || coordinates.length < 2) {
     throw new Error('Osoitetta ei löytynyt. Tarkista syöte.');
   }
 
-  const firstResult = results[0];
-
   return {
-    latitude: Number(firstResult.lat),
-    longitude: Number(firstResult.lon),
+    latitude: coordinates[1],
+    longitude: coordinates[0],
   };
 }
