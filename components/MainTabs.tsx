@@ -58,6 +58,7 @@ export default function MainTabs({ onDeleteAccount, onSignOut, user }: MainTabsP
       >
         {() => <MapScreen user={user} />}
       </Tab.Screen>
+
       <Tab.Screen
         component={PricesScreen}
         name="PricesTab"
@@ -65,14 +66,20 @@ export default function MainTabs({ onDeleteAccount, onSignOut, user }: MainTabsP
           title: 'Hinnat',
         }}
       />
+
       <Tab.Screen
         name="ProfileTab"
         options={{
           title: 'Profiili',
         }}
       >
-        {() => (
-          <ProfileScreen onDeleteAccount={onDeleteAccount} onSignOut={onSignOut} user={user} />
+        {({ navigation }) => (
+          <ProfileScreen
+            navigation={navigation}
+            onDeleteAccount={onDeleteAccount}
+            onSignOut={onSignOut}
+            user={user}
+          />
         )}
       </Tab.Screen>
     </Tab.Navigator>
