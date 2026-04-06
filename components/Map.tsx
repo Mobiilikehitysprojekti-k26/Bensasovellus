@@ -1,4 +1,4 @@
-import type { RefObject } from 'react';
+import { useEffect, useState, type RefObject } from 'react';
 import {
   ActivityIndicator,
   Platform,
@@ -13,8 +13,15 @@ import MapView, { Marker, Polyline, UrlTile, type LatLng } from 'react-native-ma
 import type { RecommendedFuelStop } from '../services/fuelRouting';
 import { brandColors } from '../theme';
 
+type NavigationInstruction = {
+  distanceLabel: string;
+  instruction: string;
+  type: number;
+};
+
 interface MapProps {
   address: string;
+  currentHeading: number | null;
   currentLocation: LatLng | null;
   destination: LatLng | null;
   destinationLabel: string;
@@ -30,6 +37,7 @@ interface MapProps {
   isNavigating: boolean;
   locationError: string | null;
   mapRef: RefObject<MapView | null>;
+  navigationInstruction: NavigationInstruction | null;
   navigationTargetLabel: string;
   onAddressChange: (value: string) => void;
   onLongPressMap: (coordinate: LatLng) => void;
@@ -40,7 +48,6 @@ interface MapProps {
   routeBannerSubtitle: string;
   routeBannerTitle: string;
   routeCoords: LatLng[];
-  speedLabel: string;
 }
 
 const initialDelta = {
@@ -48,8 +55,38 @@ const initialDelta = {
   longitudeDelta: 0.04,
 };
 
+const floatingRestoreBottom = 8;
+const recenterTopOffset = 98;
+
+function getInstructionIconName(
+  instructionType: number | null | undefined
+): keyof typeof MaterialCommunityIcons.glyphMap {
+  switch (instructionType) {
+    case 0:
+    case 2:
+    case 4:
+    case 7:
+      return 'arrow-top-left';
+    case 1:
+    case 3:
+    case 5:
+    case 8:
+      return 'arrow-top-right';
+    case 9:
+      return 'undo-variant';
+    case 10:
+      return 'flag-checkered';
+    case 12:
+    case 13:
+      return 'rotate-right';
+    default:
+      return 'arrow-up';
+  }
+}
+
 export default function Map({
   address,
+  currentHeading,
   currentLocation,
   destination,
   destinationLabel,
@@ -65,6 +102,7 @@ export default function Map({
   isNavigating,
   locationError,
   mapRef,
+  navigationInstruction,
   navigationTargetLabel,
   onAddressChange,
   onLongPressMap,
@@ -75,11 +113,20 @@ export default function Map({
   routeBannerSubtitle,
   routeBannerTitle,
   routeCoords,
-  speedLabel,
 }: MapProps) {
+  const [isNavigationPanelHidden, setIsNavigationPanelHidden] = useState(false);
+
+  useEffect(() => {
+    setIsNavigationPanelHidden(isNavigating);
+  }, [isNavigating]);
+
   const hasRoute = routeCoords.length > 1;
   const canSearch = address.trim().length > 0 && !isLoadingRoute;
   const showFuelStopMarker = Boolean(fuelStopRecommendation) && !hasVisitedFuelStop;
+  const userMarkerRotation = typeof currentHeading === 'number' ? currentHeading : 0;
+  const navigationIconName = getInstructionIconName(navigationInstruction?.type);
+  const shouldShowBottomCard = !isNavigating || !isNavigationPanelHidden;
+  const shouldShowRestoreButton = isNavigating && isNavigationPanelHidden;
 
   return (
     <View style={styles.container}>
@@ -95,7 +142,8 @@ export default function Map({
         moveOnMarkerPress={false}
         onLongPress={(event) => onLongPressMap(event.nativeEvent.coordinate)}
         onPanDrag={onPanMap}
-        rotateEnabled={false}
+        pitchEnabled
+        rotateEnabled
         showsCompass={false}
         style={styles.map}
         toolbarEnabled={false}
@@ -108,9 +156,17 @@ export default function Map({
         />
 
         {currentLocation ? (
-          <Marker coordinate={currentLocation} title="Sina" tracksViewChanges={false}>
-            <View style={styles.userMarkerOuter}>
-              <View style={styles.userMarkerInner} />
+          <Marker
+            anchor={{ x: 0.5, y: 0.5 }}
+            coordinate={currentLocation}
+            flat
+            rotation={userMarkerRotation}
+            title="Sina"
+          >
+            <View style={styles.userMarkerHalo}>
+              <View style={styles.userMarkerBody}>
+                <MaterialCommunityIcons color="#FFFFFF" name="navigation" size={22} />
+              </View>
             </View>
           </Marker>
         ) : null}
@@ -142,8 +198,8 @@ export default function Map({
               coordinates={routeCoords}
               lineCap="round"
               lineJoin="round"
-              strokeColor="rgba(15, 23, 42, 0.18)"
-              strokeWidth={10}
+              strokeColor="rgba(255, 255, 255, 0.95)"
+              strokeWidth={11}
             />
             <Polyline
               coordinates={routeCoords}
@@ -160,11 +216,21 @@ export default function Map({
         {isNavigating ? (
           <View style={styles.navigationTopBar}>
             <View style={styles.navigationTopIcon}>
-              <MaterialCommunityIcons color="#FFFFFF" name="navigation-variant" size={18} />
+              <MaterialCommunityIcons color="#FFFFFF" name={navigationIconName} size={20} />
             </View>
-            <Text numberOfLines={1} style={styles.navigationTopText}>
-              {navigationTargetLabel}
-            </Text>
+            <View style={styles.navigationTopContent}>
+              {navigationInstruction ? (
+                <Text style={styles.navigationDistanceText}>{navigationInstruction.distanceLabel}</Text>
+              ) : null}
+              <Text numberOfLines={2} style={styles.navigationTopText}>
+                {navigationInstruction?.instruction ?? navigationTargetLabel}
+              </Text>
+              {navigationInstruction ? (
+                <Text numberOfLines={1} style={styles.navigationTopSubtext}>
+                  {navigationTargetLabel}
+                </Text>
+              ) : null}
+            </View>
           </View>
         ) : (
           <View style={styles.topBar}>
@@ -201,7 +267,19 @@ export default function Map({
           </View>
         )}
 
-        {hasRoute && !isNavigating ? (
+        {!isNavigating && isFindingFuelStop ? (
+          <View style={[styles.routeBanner, styles.searchingBanner]}>
+            <View style={[styles.routeBannerIcon, styles.searchingBannerIcon]}>
+              <ActivityIndicator color="#FFFFFF" />
+            </View>
+            <View style={styles.routeBannerContent}>
+              <Text numberOfLines={1} style={styles.routeBannerTitle}>
+                Etsitaan fiksuinta bensa-asemaa
+              </Text>
+              <Text style={styles.routeBannerSubtitle}>Vertaillaan hintaa ja ajomatkaa reitilla.</Text>
+            </View>
+          </View>
+        ) : hasRoute && !isNavigating ? (
           <View style={styles.routeBanner}>
             <View style={styles.routeBannerIcon}>
               <MaterialCommunityIcons color="#FFFFFF" name="directions" size={18} />
@@ -218,48 +296,71 @@ export default function Map({
         {isNavigating && !isFollowing ? (
           <Pressable onPress={onRecenter} style={styles.recenterButton}>
             <MaterialCommunityIcons color="#FFFFFF" name="crosshairs-gps" size={18} />
-            <Text style={styles.recenterButtonText}>Keskitä</Text>
+            <Text style={styles.recenterButtonText}>Keskita</Text>
           </Pressable>
         ) : null}
 
-        <View style={styles.bottomCard}>
-          <View style={styles.metricsRow}>
-            <View style={styles.metricBox}>
-              <Text style={styles.metricLabel}>Matka</Text>
-              <Text style={styles.metricValue}>{distanceLabel}</Text>
-            </View>
-            <View style={styles.metricDivider} />
-            <View style={styles.metricBox}>
-              <Text style={styles.metricLabel}>Ajoaika</Text>
-              <Text style={styles.metricValue}>{durationLabel}</Text>
-            </View>
-          </View>
-
-          <Text style={styles.subMetrics}>Nopeus: {speedLabel} km/h</Text>
-
-          {isFindingFuelStop ? (
-            <Text style={styles.fuelInfoText}>Etsitaan paras tankkausasema...</Text>
-          ) : fuelStopSummary ? (
-            <Text style={styles.fuelInfoText}>{fuelStopSummary}</Text>
-          ) : null}
-
+        {shouldShowRestoreButton ? (
           <Pressable
-            disabled={!hasRoute || isLoadingRoute}
-            onPress={onToggleNavigation}
-            style={({ pressed }) => [
-              styles.navButton,
-              isNavigating && styles.navButtonActive,
-              (!hasRoute || isLoadingRoute) && styles.navButtonDisabled,
-              pressed && hasRoute && !isLoadingRoute && styles.navButtonPressed,
-            ]}
+            onPress={() => setIsNavigationPanelHidden(false)}
+            style={styles.navigationPanelRestoreButton}
           >
-            <Text style={styles.navButtonText}>
-              {isNavigating ? 'Lopeta navigointi' : 'Aloita navigointi'}
-            </Text>
+            <MaterialCommunityIcons color="#FFFFFF" name="chevron-down" size={26} />
           </Pressable>
+        ) : null}
 
-          {locationError ? <Text style={styles.errorText}>{locationError}</Text> : null}
-        </View>
+        {shouldShowBottomCard ? (
+          <View style={[styles.bottomCard, isNavigating && styles.bottomCardNavigation]}>
+            {isNavigating ? (
+              <Pressable
+                hitSlop={10}
+                onPress={() => setIsNavigationPanelHidden(true)}
+                style={styles.navigationPanelHandle}
+              >
+                <View style={styles.navigationPanelHandleBar} />
+                <MaterialCommunityIcons color="#475569" name="chevron-down" size={18} />
+              </Pressable>
+            ) : null}
+
+            <View style={styles.metricsRow}>
+              <View style={styles.metricBox}>
+                <Text style={styles.metricLabel}>Matka</Text>
+                <Text style={styles.metricValue}>{distanceLabel}</Text>
+              </View>
+              <View style={styles.metricDivider} />
+              <View style={styles.metricBox}>
+                <Text style={styles.metricLabel}>Ajoaika</Text>
+                <Text style={styles.metricValue}>{durationLabel}</Text>
+              </View>
+            </View>
+
+            {isFindingFuelStop ? (
+              <View style={styles.fuelInfoRow}>
+                <ActivityIndicator color={brandColors.forest} size="small" />
+                <Text style={styles.fuelInfoText}>Etsitaan fiksuinta bensa-asemaa...</Text>
+              </View>
+            ) : fuelStopSummary ? (
+              <Text style={[styles.fuelInfoText, styles.fuelInfoSummary]}>{fuelStopSummary}</Text>
+            ) : null}
+
+            <Pressable
+              disabled={!hasRoute || isLoadingRoute}
+              onPress={onToggleNavigation}
+              style={({ pressed }) => [
+                styles.navButton,
+                isNavigating && styles.navButtonActive,
+                (!hasRoute || isLoadingRoute) && styles.navButtonDisabled,
+                pressed && hasRoute && !isLoadingRoute && styles.navButtonPressed,
+              ]}
+            >
+              <Text style={styles.navButtonText}>
+                {isNavigating ? 'Lopeta navigointi' : 'Aloita navigointi'}
+              </Text>
+            </Pressable>
+
+            {locationError ? <Text style={styles.errorText}>{locationError}</Text> : null}
+          </View>
+        ) : null}
       </View>
     </View>
   );
@@ -268,7 +369,7 @@ export default function Map({
 const styles = StyleSheet.create({
   bottomCard: {
     backgroundColor: 'rgba(255, 255, 255, 0.97)',
-    borderRadius: 20,
+    borderRadius: 22,
     bottom: 14,
     left: 12,
     paddingBottom: 12,
@@ -276,6 +377,15 @@ const styles = StyleSheet.create({
     paddingTop: 14,
     position: 'absolute',
     right: 12,
+  },
+  bottomCardNavigation: {
+    borderBottomLeftRadius: 0,
+    borderBottomRightRadius: 0,
+    bottom: 0,
+    left: 0,
+    paddingBottom: 14,
+    paddingTop: 30,
+    right: 0,
   },
   container: {
     backgroundColor: '#EEF2F0',
@@ -294,10 +404,19 @@ const styles = StyleSheet.create({
     fontSize: 13,
     marginTop: 8,
   },
+  fuelInfoRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 8,
+  },
   fuelInfoText: {
     color: brandColors.forestSoft,
+    flex: 1,
     fontSize: 13,
     lineHeight: 18,
+  },
+  fuelInfoSummary: {
     marginTop: 8,
   },
   fuelMarkerOuter: {
@@ -356,32 +475,74 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '800',
   },
+  navigationPanelHandle: {
+    alignItems: 'center',
+    left: 0,
+    position: 'absolute',
+    right: 0,
+    top: 6,
+  },
+  navigationPanelHandleBar: {
+    backgroundColor: '#CBD5E1',
+    borderRadius: 999,
+    height: 4,
+    marginBottom: 4,
+    width: 46,
+  },
+  navigationPanelRestoreButton: {
+    alignItems: 'center',
+    alignSelf: 'center',
+    backgroundColor: 'rgba(15, 23, 42, 0.94)',
+    borderRadius: 18,
+    bottom: floatingRestoreBottom,
+    height: 38,
+    justifyContent: 'center',
+    position: 'absolute',
+    width: 56,
+  },
   navigationTopBar: {
     alignItems: 'center',
     backgroundColor: 'rgba(15, 23, 42, 0.94)',
     borderRadius: 16,
     flexDirection: 'row',
     left: 12,
-    minHeight: 58,
+    minHeight: 72,
     paddingHorizontal: 14,
+    paddingVertical: 10,
     position: 'absolute',
     right: 12,
     top: 12,
+  },
+  navigationTopContent: {
+    flex: 1,
+    marginLeft: 12,
+  },
+  navigationDistanceText: {
+    color: '#86EFAC',
+    fontSize: 12,
+    fontWeight: '800',
+    letterSpacing: 0.3,
+    textTransform: 'uppercase',
   },
   navigationTopIcon: {
     alignItems: 'center',
     backgroundColor: 'rgba(255, 255, 255, 0.14)',
     borderRadius: 12,
-    height: 34,
+    height: 40,
     justifyContent: 'center',
-    width: 34,
+    width: 40,
+  },
+  navigationTopSubtext: {
+    color: 'rgba(255, 255, 255, 0.72)',
+    fontSize: 12,
+    fontWeight: '600',
+    marginTop: 4,
   },
   navigationTopText: {
     color: '#FFFFFF',
-    flex: 1,
     fontSize: 15,
     fontWeight: '700',
-    marginLeft: 12,
+    marginTop: 2,
   },
   overlay: {
     ...StyleSheet.absoluteFillObject,
@@ -390,12 +551,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     backgroundColor: '#0F172A',
     borderRadius: 18,
-    bottom: 164,
     flexDirection: 'row',
     paddingHorizontal: 14,
     paddingVertical: 10,
     position: 'absolute',
     right: 12,
+    top: recenterTopOffset,
   },
   recenterButtonText: {
     color: '#FFFFFF',
@@ -458,6 +619,12 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '800',
   },
+  searchingBanner: {
+    backgroundColor: 'rgba(240, 253, 244, 0.98)',
+  },
+  searchingBannerIcon: {
+    backgroundColor: '#1F513F',
+  },
   searchInput: {
     color: '#0F172A',
     flex: 1,
@@ -474,11 +641,6 @@ const styles = StyleSheet.create({
     minHeight: 58,
     paddingHorizontal: 16,
   },
-  subMetrics: {
-    color: '#475569',
-    fontSize: 13,
-    marginTop: 8,
-  },
   topBar: {
     flexDirection: 'row',
     gap: 8,
@@ -487,17 +649,21 @@ const styles = StyleSheet.create({
     right: 12,
     top: 12,
   },
-  userMarkerInner: {
-    backgroundColor: '#1ED35B',
+  userMarkerBody: {
+    alignItems: 'center',
+    backgroundColor: '#153B30',
     borderColor: '#FFFFFF',
-    borderRadius: 10,
-    borderWidth: 3,
-    height: 20,
-    width: 20,
-  },
-  userMarkerOuter: {
-    backgroundColor: 'rgba(30, 211, 91, 0.16)',
     borderRadius: 18,
+    borderWidth: 2,
+    height: 36,
+    justifyContent: 'center',
+    width: 36,
+  },
+  userMarkerHalo: {
+    alignItems: 'center',
+    backgroundColor: 'rgba(30, 211, 91, 0.16)',
+    borderRadius: 28,
+    justifyContent: 'center',
     padding: 6,
   },
 });

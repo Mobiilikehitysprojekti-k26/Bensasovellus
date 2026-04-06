@@ -24,6 +24,7 @@ import {
   fetchDrivingRoute,
   fetchDrivingRouteWithWaypoints,
   type DrivingRoute,
+  type DrivingRouteStep,
 } from '../services/routing';
 import { brandColors } from '../theme';
 import Map from './Map';
@@ -38,14 +39,22 @@ const fallbackCenter = {
 };
 
 const cameraUpdateMs = 700;
-const routeRefreshMs = 9000;
-const maxRouteStaleMs = 18000;
-const offRouteThresholdM = 45;
-const navigationZoom = 19;
-const navigationPitch = 58;
+const minRouteRefreshIntervalMs = 15000;
+const offRouteThresholdM = 110;
+const navigationZoom = 20.4;
+const navigationPitch = 26;
+const navigationLookAheadMeters = 70;
+const defaultMapZoom = 15;
 const stationarySpeedMps = 0.8;
 const minJitterThresholdM = 4;
 const maxJitterThresholdM = 12;
+const headingRefreshThresholdDegrees = 6;
+
+type NavigationInstruction = {
+  distanceLabel: string;
+  instruction: string;
+  type: number;
+};
 
 function toRadians(value: number): number {
   return (value * Math.PI) / 180;
@@ -76,6 +85,74 @@ function smoothHeading(previousHeading: number | null, nextHeading: number): num
   const difference = ((((nextHeading - previousHeading) % 360) + 540) % 360) - 180;
 
   return (previousHeading + difference * 0.25 + 360) % 360;
+}
+
+function calculateBearingDegrees(start: LatLng, end: LatLng): number {
+  const startLatitude = toRadians(start.latitude);
+  const endLatitude = toRadians(end.latitude);
+  const longitudeDelta = toRadians(end.longitude - start.longitude);
+  const y = Math.sin(longitudeDelta) * Math.cos(endLatitude);
+  const x =
+    Math.cos(startLatitude) * Math.sin(endLatitude) -
+    Math.sin(startLatitude) * Math.cos(endLatitude) * Math.cos(longitudeDelta);
+
+  return (((Math.atan2(y, x) * 180) / Math.PI) + 360) % 360;
+}
+
+function getHeadingDeltaDegrees(fromHeading: number, toHeading: number): number {
+  return Math.abs((((toHeading - fromHeading) % 360) + 540) % 360 - 180);
+}
+
+function resolveCameraHeading(primaryHeading: number | null, fallbackHeading?: number | null): number {
+  if (typeof primaryHeading === 'number' && Number.isFinite(primaryHeading)) {
+    return (primaryHeading + 360) % 360;
+  }
+
+  if (typeof fallbackHeading === 'number' && Number.isFinite(fallbackHeading)) {
+    return (fallbackHeading + 360) % 360;
+  }
+
+  return 0;
+}
+
+function offsetCoordinateByMeters(origin: LatLng, headingDegrees: number, distanceMeters: number): LatLng {
+  const earthRadius = 6378137;
+  const angularDistance = distanceMeters / earthRadius;
+  const headingRadians = toRadians(headingDegrees);
+  const latitudeRadians = toRadians(origin.latitude);
+  const longitudeRadians = toRadians(origin.longitude);
+
+  const destinationLatitude = Math.asin(
+    Math.sin(latitudeRadians) * Math.cos(angularDistance) +
+      Math.cos(latitudeRadians) * Math.sin(angularDistance) * Math.cos(headingRadians)
+  );
+  const destinationLongitude =
+    longitudeRadians +
+    Math.atan2(
+      Math.sin(headingRadians) * Math.sin(angularDistance) * Math.cos(latitudeRadians),
+      Math.cos(angularDistance) - Math.sin(latitudeRadians) * Math.sin(destinationLatitude)
+    );
+
+  return {
+    latitude: (destinationLatitude * 180) / Math.PI,
+    longitude: (destinationLongitude * 180) / Math.PI,
+  };
+}
+
+function formatNavigationDistanceLabel(distanceMeters: number): string {
+  if (distanceMeters <= 20) {
+    return 'Heti';
+  }
+
+  if (distanceMeters < 1000) {
+    return `${Math.max(10, Math.round(distanceMeters / 10) * 10)} m`;
+  }
+
+  return `${(distanceMeters / 1000).toFixed(1)} km`;
+}
+
+function isActionableStepType(stepType: number): boolean {
+  return [0, 1, 2, 3, 4, 5, 7, 8, 9, 10, 12, 13].includes(stepType);
 }
 
 function distancePointToSegmentMeters(point: LatLng, start: LatLng, end: LatLng): number {
@@ -126,21 +203,108 @@ function distanceToRouteMeters(point: LatLng, route: LatLng[]): number {
   return minimumDistance;
 }
 
+function findNearestRoutePointIndex(point: LatLng, route: LatLng[]): number {
+  if (route.length === 0) {
+    return 0;
+  }
+
+  let nearestIndex = 0;
+  let nearestDistance = Infinity;
+
+  for (let index = 0; index < route.length; index += 1) {
+    const distance = haversineMeters(point, route[index]);
+
+    if (distance < nearestDistance) {
+      nearestDistance = distance;
+      nearestIndex = index;
+    }
+  }
+
+  return nearestIndex;
+}
+
+function measureRouteDistanceBetweenIndices(
+  route: LatLng[],
+  startIndex: number,
+  endIndex: number
+): number {
+  if (route.length < 2 || endIndex <= startIndex) {
+    return 0;
+  }
+
+  const safeStartIndex = Math.max(0, Math.min(route.length - 1, startIndex));
+  const safeEndIndex = Math.max(safeStartIndex, Math.min(route.length - 1, endIndex));
+  let totalDistance = 0;
+
+  for (let index = safeStartIndex; index < safeEndIndex; index += 1) {
+    totalDistance += haversineMeters(route[index], route[index + 1]);
+  }
+
+  return totalDistance;
+}
+
+function buildNavigationInstruction(
+  currentLocation: LatLng,
+  route: LatLng[],
+  steps: DrivingRouteStep[]
+): NavigationInstruction | null {
+  if (route.length < 2 || steps.length === 0) {
+    return null;
+  }
+
+  const nearestRouteIndex = findNearestRoutePointIndex(currentLocation, route);
+  const upcomingActionStep = steps.find(
+    (step) => isActionableStepType(step.type) && step.wayPointStartIndex > nearestRouteIndex + 1
+  );
+
+  if (upcomingActionStep) {
+    return {
+      distanceLabel: formatNavigationDistanceLabel(
+        measureRouteDistanceBetweenIndices(route, nearestRouteIndex, upcomingActionStep.wayPointStartIndex)
+      ),
+      instruction: upcomingActionStep.instruction,
+      type: upcomingActionStep.type,
+    };
+  }
+
+  const currentStep = steps.find((step) => step.wayPointEndIndex >= nearestRouteIndex);
+
+  if (!currentStep) {
+    return null;
+  }
+
+  return {
+    distanceLabel:
+      currentStep.type === 10
+        ? 'Perilla'
+        : formatNavigationDistanceLabel(
+            measureRouteDistanceBetweenIndices(route, nearestRouteIndex, currentStep.wayPointEndIndex)
+          ),
+    instruction: currentStep.instruction,
+    type: currentStep.type,
+  };
+}
+
 function simplifyPolylineForRender(points: LatLng[]): LatLng[] {
   if (points.length < 3) {
     return points;
   }
 
   const minDistanceMeters =
-    points.length > 3000 ? 20 : points.length > 1500 ? 12 : points.length > 800 ? 8 : 4;
+    points.length > 4500 ? 12 : points.length > 2500 ? 8 : points.length > 1200 ? 4 : 2;
+  const turnThresholdDegrees = 14;
 
   const simplified: LatLng[] = [points[0]];
   let lastKeptPoint = points[0];
 
   for (let index = 1; index < points.length - 1; index += 1) {
     const point = points[index];
+    const nextPoint = points[index + 1];
+    const previousBearing = calculateBearingDegrees(lastKeptPoint, point);
+    const nextBearing = calculateBearingDegrees(point, nextPoint);
+    const turnAmount = getHeadingDeltaDegrees(previousBearing, nextBearing);
 
-    if (haversineMeters(lastKeptPoint, point) >= minDistanceMeters) {
+    if (haversineMeters(lastKeptPoint, point) >= minDistanceMeters || turnAmount >= turnThresholdDegrees) {
       simplified.push(point);
       lastKeptPoint = point;
     }
@@ -223,6 +387,7 @@ export default function MapScreen({ user }: MapScreenProps) {
   const currentLocationRef = useRef<LatLng | null>(null);
   const recommendedFuelStopRef = useRef<RecommendedFuelStop | null>(null);
   const hasVisitedFuelStopRef = useRef(false);
+  const lastCameraHeadingRef = useRef<number | null>(null);
 
   const lastCameraAtRef = useRef(0);
   const lastRouteRefreshAtRef = useRef(0);
@@ -235,10 +400,10 @@ export default function MapScreen({ user }: MapScreenProps) {
   const [destination, setDestination] = useState<LatLng | null>(null);
   const [destinationLabel, setDestinationLabel] = useState('Maaranpaa');
   const [routeCoords, setRouteCoords] = useState<LatLng[]>([]);
+  const [routeSteps, setRouteSteps] = useState<DrivingRouteStep[]>([]);
   const [distanceMeters, setDistanceMeters] = useState<number | null>(null);
   const [durationSeconds, setDurationSeconds] = useState<number | null>(null);
   const [heading, setHeading] = useState<number | null>(null);
-  const [speedKmh, setSpeedKmh] = useState(0);
   const [isLoadingRoute, setIsLoadingRoute] = useState(false);
   const [isNavigating, setIsNavigating] = useState(false);
   const [isFollowing, setIsFollowing] = useState(true);
@@ -252,6 +417,13 @@ export default function MapScreen({ user }: MapScreenProps) {
   const [isFindingFuelStop, setIsFindingFuelStop] = useState(false);
 
   const routeRenderCoords = useMemo(() => simplifyPolylineForRender(routeCoords), [routeCoords]);
+  const navigationInstruction = useMemo(
+    () =>
+      isNavigating && currentLocation
+        ? buildNavigationInstruction(currentLocation, routeCoords, routeSteps)
+        : null,
+    [currentLocation, isNavigating, routeCoords, routeSteps]
+  );
 
   useEffect(() => {
     destinationRef.current = destination;
@@ -320,8 +492,51 @@ export default function MapScreen({ user }: MapScreenProps) {
     };
   }, [user?.email]);
 
+  useEffect(() => {
+    if (!isNavigating || !isFollowing || !currentLocationRef.current) {
+      return;
+    }
+
+    const nextHeading = resolveCameraHeading(heading, null);
+    const previousHeading = lastCameraHeadingRef.current;
+
+    if (
+      previousHeading !== null &&
+      getHeadingDeltaDegrees(previousHeading, nextHeading) < headingRefreshThresholdDegrees
+    ) {
+      return;
+    }
+
+    focusNavigationCamera(currentLocationRef.current, nextHeading);
+  }, [heading, isFollowing, isNavigating]);
+
+  const focusNavigationCamera = (point: LatLng, headingOverride?: number | null) => {
+    if (!mapRef.current) {
+      return;
+    }
+
+    const resolvedHeading = resolveCameraHeading(headingOverride ?? null, headingRef.current);
+    const cameraCenter =
+      typeof headingOverride === 'number' || headingRef.current !== null
+        ? offsetCoordinateByMeters(point, resolvedHeading, navigationLookAheadMeters)
+        : point;
+
+    mapRef.current.animateCamera(
+      {
+        center: cameraCenter,
+        heading: resolvedHeading,
+        pitch: navigationPitch,
+        zoom: navigationZoom,
+      },
+      { duration: 450 }
+    );
+    lastCameraAtRef.current = Date.now();
+    lastCameraHeadingRef.current = resolvedHeading;
+  };
+
   const applyRoute = (route: DrivingRoute, fitOnMap: boolean = true) => {
     setRouteCoords(route.geometry);
+    setRouteSteps(route.steps);
     setDistanceMeters(route.distanceMeters);
     setDurationSeconds(route.durationSeconds);
     lastRouteRefreshAtRef.current = Date.now();
@@ -359,13 +574,13 @@ export default function MapScreen({ user }: MapScreenProps) {
     }
 
     const now = Date.now();
-    const staleMs = now - lastRouteRefreshAtRef.current;
+    const sinceLastRefreshMs = now - lastRouteRefreshAtRef.current;
     const offRouteDistance = distanceToRouteMeters(userPoint, routeRef.current);
     const mustRefresh =
       routeRef.current.length < 2 ||
-      staleMs > maxRouteStaleMs ||
-      (isNavigatingRef.current && offRouteDistance > offRouteThresholdM) ||
-      (isNavigatingRef.current && staleMs > routeRefreshMs);
+      (isNavigatingRef.current &&
+        offRouteDistance > offRouteThresholdM &&
+        sinceLastRefreshMs > minRouteRefreshIntervalMs);
 
     if (!mustRefresh) {
       return;
@@ -488,7 +703,6 @@ export default function MapScreen({ user }: MapScreenProps) {
         };
 
         setCurrentLocation(initialPoint);
-        setSpeedKmh(Math.max(0, (initialPosition.coords.speed ?? 0) * 3.6));
         setLocationError(null);
         setIsLocating(false);
 
@@ -521,8 +735,6 @@ export default function MapScreen({ user }: MapScreenProps) {
               setCurrentLocation(userPoint);
             }
 
-            setSpeedKmh(shouldFreeze ? 0 : speedMps * 3.6);
-
             if (destinationRef.current) {
               const handledFuelStopArrival = await handleFuelStopArrival(userPoint);
 
@@ -537,14 +749,7 @@ export default function MapScreen({ user }: MapScreenProps) {
               mapRef.current &&
               Date.now() - lastCameraAtRef.current > cameraUpdateMs
             ) {
-              mapRef.current.animateCamera(
-                {
-                  center: userPoint,
-                  heading: headingRef.current ?? position.coords.heading ?? 0,
-                },
-                { duration: 500 }
-              );
-              lastCameraAtRef.current = Date.now();
+              focusNavigationCamera(userPoint, headingRef.current ?? position.coords.heading ?? null);
             }
 
             if (isNavigatingRef.current && destinationRef.current) {
@@ -596,7 +801,7 @@ export default function MapScreen({ user }: MapScreenProps) {
         center: currentLocation,
         heading: 0,
         pitch: 0,
-        zoom: 15,
+        zoom: defaultMapZoom,
       },
       { duration: 450 }
     );
@@ -629,6 +834,7 @@ export default function MapScreen({ user }: MapScreenProps) {
       setLocationError(message);
       Alert.alert('Virhe', message);
       setRouteCoords([]);
+      setRouteSteps([]);
       setDistanceMeters(null);
       setDurationSeconds(null);
       setDestination(null);
@@ -659,6 +865,7 @@ export default function MapScreen({ user }: MapScreenProps) {
       setLocationError(message);
       Alert.alert('Virhe', message);
       setRouteCoords([]);
+      setRouteSteps([]);
       setDistanceMeters(null);
       setDurationSeconds(null);
       setDestination(null);
@@ -681,13 +888,7 @@ export default function MapScreen({ user }: MapScreenProps) {
 
     if (nextValue && currentLocationRef.current && mapRef.current) {
       navigationCameraLockedRef.current = true;
-      mapRef.current.setCamera({
-        center: currentLocationRef.current,
-        heading: heading ?? 0,
-        pitch: navigationPitch,
-        zoom: navigationZoom,
-      });
-      lastCameraAtRef.current = Date.now();
+      focusNavigationCamera(currentLocationRef.current, heading);
       return;
     }
 
@@ -710,13 +911,7 @@ export default function MapScreen({ user }: MapScreenProps) {
 
     if (isNavigating) {
       navigationCameraLockedRef.current = true;
-      mapRef.current.setCamera({
-        center: currentLocationRef.current,
-        heading: heading ?? 0,
-        pitch: navigationPitch,
-        zoom: navigationZoom,
-      });
-      lastCameraAtRef.current = Date.now();
+      focusNavigationCamera(currentLocationRef.current, heading);
       return;
     }
 
@@ -725,7 +920,7 @@ export default function MapScreen({ user }: MapScreenProps) {
         center: currentLocationRef.current,
         heading: 0,
         pitch: 0,
-        zoom: 15,
+        zoom: defaultMapZoom,
       },
       { duration: 450 }
     );
@@ -733,7 +928,6 @@ export default function MapScreen({ user }: MapScreenProps) {
 
   const distanceLabel = formatDistanceLabel(distanceMeters);
   const durationLabel = formatDurationLabel(durationSeconds);
-  const speedLabel = Math.round(speedKmh).toString();
   const initialCenter = currentLocation ?? fallbackCenter;
   const navigationTargetLabel = createNavigationTargetLabel(
     destinationLabel,
@@ -765,6 +959,7 @@ export default function MapScreen({ user }: MapScreenProps) {
       ) : (
         <Map
           address={address}
+          currentHeading={heading}
           currentLocation={currentLocation}
           destination={destination}
           destinationLabel={destinationLabel}
@@ -780,6 +975,7 @@ export default function MapScreen({ user }: MapScreenProps) {
           isNavigating={isNavigating}
           locationError={locationError}
           mapRef={mapRef}
+          navigationInstruction={navigationInstruction}
           navigationTargetLabel={navigationTargetLabel}
           onAddressChange={setAddress}
           onLongPressMap={(coordinate) => {
@@ -798,7 +994,6 @@ export default function MapScreen({ user }: MapScreenProps) {
           routeBannerSubtitle={routeBannerSubtitle}
           routeBannerTitle={routeBannerTitle}
           routeCoords={routeRenderCoords}
-          speedLabel={speedLabel}
         />
       )}
 

@@ -1,44 +1,26 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import type { LatLng } from 'react-native-maps';
-import { createOpenRouteServiceGeocodeUrl } from './openRouteService';
 import { fetchDrivingRouteWithWaypoints, type DrivingRoute } from './routing';
 
 const FUEL_API_BASE_URL = 'http://204.168.156.110:3000/api/fuel';
 const FUEL_API_KEY = '01102FFA595F2B91';
-const STATION_COORDINATE_CACHE_KEY = '@bensasovellus/fuel_station_coordinates_v1';
-const GEOCODE_CONCURRENCY = 4;
-const EXACT_ROUTE_CONCURRENCY = 3;
-const MAX_EXACT_CANDIDATES = 6;
-const MAX_CORRIDOR_DISTANCE_METERS = 18000;
+const EXACT_ROUTE_CONCURRENCY = 2;
+const MAX_EXACT_CANDIDATES = 3;
+const MAX_CORRIDOR_DISTANCE_METERS = 8000;
+const ROAD_DISTANCE_ESTIMATE_FACTOR = 1.18;
 
 export type FuelType = '95' | '98' | 'diesel';
 
 type FuelApiStation = {
   fuel_type: string;
+  lat?: number | null;
+  lon?: number | null;
+  matched_station_name?: string | null;
   price: number;
+  reported_at?: string;
   scraped_at: string;
   station_name: string;
   updated_text: string;
 };
-
-type OpenRouteServiceGeocodeResponse = {
-  features?: Array<{
-    geometry?: {
-      coordinates?: [number, number];
-    };
-    properties?: {
-      label?: string;
-    };
-  }>;
-};
-
-type StationCoordinateCacheEntry = {
-  latitude: number;
-  longitude: number;
-  resolvedName?: string;
-};
-
-type StationCoordinateCache = Record<string, StationCoordinateCacheEntry>;
 
 type StationCandidate = {
   coordinate: LatLng;
@@ -64,12 +46,6 @@ export interface RecommendedFuelStop {
   totalRouteDistanceMeters: number;
   totalRouteDurationSeconds: number;
   updatedText: string;
-}
-
-let stationCoordinateCache: StationCoordinateCache | null = null;
-
-function normalizeStationKey(stationName: string): string {
-  return stationName.trim().toLowerCase();
 }
 
 function toRadians(value: number): number {
@@ -151,37 +127,60 @@ function calculateTripFuelCost(
   return litersConsumed * pricePerLiter;
 }
 
-async function getStationCoordinateCache(): Promise<StationCoordinateCache> {
-  if (stationCoordinateCache) {
-    return stationCoordinateCache;
-  }
-
-  try {
-    const rawValue = await AsyncStorage.getItem(STATION_COORDINATE_CACHE_KEY);
-
-    if (!rawValue) {
-      stationCoordinateCache = {};
-      return stationCoordinateCache;
-    }
-
-    const parsedValue = JSON.parse(rawValue) as StationCoordinateCache;
-    stationCoordinateCache = parsedValue ?? {};
-    return stationCoordinateCache;
-  } catch (error) {
-    console.error('Failed to load station coordinate cache', error);
-    stationCoordinateCache = {};
-    return stationCoordinateCache;
-  }
+function estimateRoadDistanceMeters(start: LatLng, end: LatLng): number {
+  return haversineMeters(start, end) * ROAD_DISTANCE_ESTIMATE_FACTOR;
 }
 
-async function saveStationCoordinateCache(cache: StationCoordinateCache): Promise<void> {
-  stationCoordinateCache = cache;
+function hasValidCoordinate(station: FuelApiStation): station is FuelApiStation & {
+  lat: number;
+  lon: number;
+} {
+  return (
+    typeof station.lat === 'number' &&
+    Number.isFinite(station.lat) &&
+    typeof station.lon === 'number' &&
+    Number.isFinite(station.lon)
+  );
+}
 
-  try {
-    await AsyncStorage.setItem(STATION_COORDINATE_CACHE_KEY, JSON.stringify(cache));
-  } catch (error) {
-    console.error('Failed to save station coordinate cache', error);
+function isValidPrice(price: number): boolean {
+  return Number.isFinite(price) && price > 0;
+}
+
+function getMatchedStationName(station: Pick<FuelApiStation, 'matched_station_name'>): string | undefined {
+  const normalizedName = station.matched_station_name?.trim();
+  return normalizedName ? normalizedName : undefined;
+}
+
+function getStationDisplayName(
+  station: Pick<FuelApiStation, 'matched_station_name' | 'station_name'>
+): string {
+  return getMatchedStationName(station) ?? station.station_name;
+}
+
+function createStationCandidate(
+  station: FuelApiStation,
+  baseRouteGeometry: LatLng[]
+): StationCandidate | null {
+  if (!hasValidCoordinate(station) || !isValidPrice(station.price)) {
+    return null;
   }
+
+  const coordinate = {
+    latitude: station.lat,
+    longitude: station.lon,
+  };
+
+  return {
+    coordinate,
+    corridorDistanceMeters: distanceToRouteMeters(coordinate, baseRouteGeometry),
+    fuelType: station.fuel_type as FuelType,
+    price: station.price,
+    resolvedName: getMatchedStationName(station),
+    scrapedAt: station.scraped_at,
+    stationName: getStationDisplayName(station),
+    updatedText: station.updated_text,
+  };
 }
 
 async function fetchFuelStations(fuelType: FuelType): Promise<FuelApiStation[]> {
@@ -193,7 +192,7 @@ async function fetchFuelStations(fuelType: FuelType): Promise<FuelApiStation[]> 
   });
 
   if (!response.ok) {
-    throw new Error('Polttoainehintojen haku epäonnistui.');
+    throw new Error('Polttoainehintojen haku epaonnistui.');
   }
 
   const data = (await response.json()) as FuelApiStation[];
@@ -203,38 +202,6 @@ async function fetchFuelStations(fuelType: FuelType): Promise<FuelApiStation[]> 
   }
 
   return data;
-}
-
-async function geocodeFuelStation(stationName: string): Promise<StationCoordinateCacheEntry | null> {
-  const url = createOpenRouteServiceGeocodeUrl({
-    boundaryCountry: 'FI',
-    size: 1,
-    text: `${stationName}, Finland`,
-  });
-
-  const response = await fetch(url, {
-    headers: {
-      Accept: 'application/json',
-    },
-  });
-
-  if (!response.ok) {
-    return null;
-  }
-
-  const data = (await response.json()) as OpenRouteServiceGeocodeResponse;
-  const feature = data.features?.[0];
-  const coordinates = feature?.geometry?.coordinates;
-
-  if (!coordinates || coordinates.length < 2) {
-    return null;
-  }
-
-  return {
-    latitude: coordinates[1],
-    longitude: coordinates[0],
-    resolvedName: feature?.properties?.label,
-  };
 }
 
 async function mapWithConcurrency<T, R>(
@@ -261,61 +228,18 @@ async function mapWithConcurrency<T, R>(
   return results;
 }
 
-async function resolveStationCandidates(
+function resolveStationCandidates(
   stations: FuelApiStation[],
   baseRouteGeometry: LatLng[]
-): Promise<StationCandidate[]> {
-  const cache = await getStationCoordinateCache();
-  const nextCache: StationCoordinateCache = { ...cache };
-  const stationsToGeocode = stations.filter(
-    (station) => !nextCache[normalizeStationKey(station.station_name)]
-  );
-
-  if (stationsToGeocode.length > 0) {
-    const geocodedStations = await mapWithConcurrency(
-      stationsToGeocode,
-      GEOCODE_CONCURRENCY,
-      async (station) => ({
-        coordinate: await geocodeFuelStation(station.station_name),
-        stationName: station.station_name,
-      })
-    );
-
-    for (const geocodedStation of geocodedStations) {
-      if (!geocodedStation.coordinate) {
-        continue;
-      }
-
-      nextCache[normalizeStationKey(geocodedStation.stationName)] = geocodedStation.coordinate;
-    }
-
-    await saveStationCoordinateCache(nextCache);
-  }
-
+): StationCandidate[] {
   const resolvedStations: StationCandidate[] = [];
 
   for (const station of stations) {
-    const cachedCoordinate = nextCache[normalizeStationKey(station.station_name)];
+    const resolvedStation = createStationCandidate(station, baseRouteGeometry);
 
-    if (!cachedCoordinate) {
-      continue;
+    if (resolvedStation) {
+      resolvedStations.push(resolvedStation);
     }
-
-    const coordinate = {
-      latitude: cachedCoordinate.latitude,
-      longitude: cachedCoordinate.longitude,
-    };
-
-    resolvedStations.push({
-      coordinate,
-      corridorDistanceMeters: distanceToRouteMeters(coordinate, baseRouteGeometry),
-      fuelType: station.fuel_type as FuelType,
-      price: station.price,
-      resolvedName: cachedCoordinate.resolvedName,
-      scrapedAt: station.scraped_at,
-      stationName: station.station_name,
-      updatedText: station.updated_text,
-    });
   }
 
   return resolvedStations;
@@ -329,21 +253,34 @@ export async function findBestFuelStop(params: {
   fuelType: FuelType;
 }): Promise<RecommendedFuelStop | null> {
   const stations = await fetchFuelStations(params.fuelType);
-  const stationCandidates = await resolveStationCandidates(stations, params.baseRoute.geometry);
+  const stationCandidates = resolveStationCandidates(stations, params.baseRoute.geometry);
 
   if (stationCandidates.length === 0) {
     return null;
   }
 
+  const directRoadEstimateMeters = estimateRoadDistanceMeters(
+    params.currentLocation,
+    params.destination
+  );
+
   const approximatedCandidates = stationCandidates
     .map((station) => {
-      const estimatedDistanceMeters =
-        params.baseRoute.distanceMeters + station.corridorDistanceMeters * 2.2;
+      const approximateViaStationDistanceMeters = Math.max(
+        params.baseRoute.distanceMeters,
+        estimateRoadDistanceMeters(params.currentLocation, station.coordinate) +
+          estimateRoadDistanceMeters(station.coordinate, params.destination)
+      );
 
       return {
         ...station,
+        approximateDetourMeters: Math.max(
+          0,
+          approximateViaStationDistanceMeters -
+            Math.max(params.baseRoute.distanceMeters, directRoadEstimateMeters)
+        ),
         approximateTripFuelCost: calculateTripFuelCost(
-          estimatedDistanceMeters,
+          approximateViaStationDistanceMeters,
           params.combinedConsumption,
           station.price
         ),
@@ -352,6 +289,10 @@ export async function findBestFuelStop(params: {
     .sort((left, right) => {
       if (left.approximateTripFuelCost !== right.approximateTripFuelCost) {
         return left.approximateTripFuelCost - right.approximateTripFuelCost;
+      }
+
+      if (left.approximateDetourMeters !== right.approximateDetourMeters) {
+        return left.approximateDetourMeters - right.approximateDetourMeters;
       }
 
       if (left.price !== right.price) {
@@ -426,8 +367,15 @@ export async function findBestFuelStop(params: {
   return bestStation ?? null;
 }
 
+export function getFuelStopDisplayName(
+  fuelStop: Pick<RecommendedFuelStop, 'resolvedName' | 'stationName'>
+): string {
+  const resolvedName = fuelStop.resolvedName?.trim();
+  return resolvedName ? resolvedName : fuelStop.stationName;
+}
+
 export function formatFuelPrice(price: number): string {
-  return `${price.toFixed(3)} €/l`;
+  return `${price.toFixed(3)} EUR/l`;
 }
 
 export function formatExtraDistance(detourDistanceMeters: number): string {
