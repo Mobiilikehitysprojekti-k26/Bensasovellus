@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
-import { MaterialCommunityIcons } from '@expo/vector-icons';
 import {
   DefaultTheme as NavigationDefaultTheme,
   NavigationContainer,
@@ -13,6 +12,8 @@ import LoginScreen from './components/LoginScreen';
 import MainTabs from './components/MainTabs';
 import RegistrationScreen from './components/RegistrationScreen';
 import WelcomeScreen from './components/WelcomeScreen';
+import AddRefuel from './components/AddRefuel';
+import RefuelHistory from './components/RefuelHistory';
 import {
   clearAuthToken,
   clearRegisteredUser,
@@ -33,6 +34,8 @@ type RootStackParamList = {
   Main: undefined;
   Register: undefined;
   Welcome: undefined;
+  AddRefuel: undefined;
+  RefuelHistory: undefined;
 };
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
@@ -48,8 +51,7 @@ export default function App() {
         const hasActiveSession = await getSessionActive();
         setRegisteredUser(user);
         setAuthStatus(user && hasActiveSession ? 'authenticated' : 'unauthenticated');
-      } catch (error) {
-        console.error('Failed to load registered user', error);
+      } catch {
         setAuthStatus('unauthenticated');
       }
     };
@@ -112,20 +114,7 @@ export default function App() {
 
   return (
     <SafeAreaProvider>
-      <PaperProvider
-        theme={appTheme}
-        settings={{
-          icon: ({ color, size, direction, testID, name }) => (
-            <MaterialCommunityIcons
-              color={color}
-              name={name}
-              size={size}
-              style={{ transform: [{ scaleX: direction === 'rtl' ? -1 : 1 }] }}
-              testID={testID}
-            />
-          ),
-        }}
-      >
+      <PaperProvider theme={appTheme}>
         {authStatus === 'loading' ? (
           <View style={styles.loadingContainer}>
             <ActivityIndicator animating size="large" color={brandColors.forest} />
@@ -134,15 +123,19 @@ export default function App() {
           <NavigationContainer theme={navigationTheme}>
             <Stack.Navigator screenOptions={{ headerShown: false }}>
               {authStatus === 'authenticated' ? (
-                <Stack.Screen name="Main">
-                  {() => (
-                    <MainTabs
-                      onDeleteAccount={handleDeleteAccount}
-                      onSignOut={handleSignOut}
-                      user={registeredUser}
-                    />
-                  )}
-                </Stack.Screen>
+                <>
+                  <Stack.Screen name="Main">
+                    {() => (
+                      <MainTabs
+                        onDeleteAccount={handleDeleteAccount}
+                        onSignOut={handleSignOut}
+                        user={registeredUser}
+                      />
+                    )}
+                  </Stack.Screen>
+                  <Stack.Screen name="AddRefuel" component={AddRefuel} />
+                  <Stack.Screen name="RefuelHistory" component={RefuelHistory} />
+                </>
               ) : (
                 <>
                   <Stack.Screen name="Welcome">

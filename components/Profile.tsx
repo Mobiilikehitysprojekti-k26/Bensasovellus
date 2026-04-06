@@ -146,10 +146,12 @@ function SubPageLayout({ children, onBack, title }: SubPageLayoutProps) {
 }
 
 export default function ProfileScreen({
+  navigation,
   onDeleteAccount,
   onSignOut,
   user,
-}: ProfileScreenProps) {
+}: any) {
+
   const [activePage, setActivePage] = useState<ActivePage>('main');
   const [preferences, setPreferences] = useState<ProfilePreferences>(createDefaultProfilePreferences());
   const [vehicleNameInput, setVehicleNameInput] = useState('');
@@ -484,16 +486,7 @@ export default function ProfileScreen({
     );
   }
 
-  if (activePage === 'history') {
-    return (
-      <SubPageLayout onBack={() => setActivePage('main')} title="Tankkaushistoria">
-        <Text style={styles.emptyText} variant="bodyMedium">
-          Tankkaushistoria lisätään seuraavaksi. Tähän näkymään tulee myöhemmin listaus
-          tankkaustapahtumista.
-        </Text>
-      </SubPageLayout>
-    );
-  }
+
 
   if (activePage === 'vehicle') {
     return (
@@ -701,7 +694,12 @@ export default function ProfileScreen({
         </View>
 
         <MenuRow icon="account-outline" onPress={() => setActivePage('info')} title="Omat tiedot" />
-        <MenuRow icon="history" onPress={() => setActivePage('history')} title="Tankkaushistoria" />
+        <MenuRow
+         icon="history"
+          title="Tankkaushistoria"
+          onPress={() => navigation.navigate("RefuelHistory")}
+          />
+
         <MenuRow
           icon="car-cog"
           onPress={() => setActivePage('vehicle')}

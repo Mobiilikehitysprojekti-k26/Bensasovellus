@@ -24,7 +24,7 @@ export default function PricesScreen() {
   const API_URL = `url here`;
 
   useEffect(() => {
-     fetch(API_URL, {
+    fetch(API_URL, {
       headers: {
         'x-api-key': API_KEY,
       },
