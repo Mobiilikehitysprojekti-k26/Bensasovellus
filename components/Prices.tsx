@@ -31,7 +31,7 @@ export default function PricesScreen() {
   const navigation = useNavigation();
 
   const API_KEY = process.env.EXPO_PUBLIC_DATABASE_API_KEY
-  const API_URL = 'http://204.168.156.110:3000/api/all';
+  const API_URL = 'http://204.168.156.110:3000/api/all'
 
   useEffect(() => {
     fetch(API_URL, {
