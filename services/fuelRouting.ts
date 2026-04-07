@@ -9,7 +9,7 @@ const MAX_CORRIDOR_DISTANCE_METERS = 8000;
 const ROAD_DISTANCE_ESTIMATE_FACTOR = 1.18;
 
 export type FuelType = '95' | '98' | 'diesel';
-
+//etsii asemat
 type FuelApiStation = {
   fuel_type: string;
   lat?: number | null;
