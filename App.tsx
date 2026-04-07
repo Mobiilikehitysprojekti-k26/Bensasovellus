@@ -14,6 +14,7 @@ import RegistrationScreen from './components/RegistrationScreen';
 import WelcomeScreen from './components/WelcomeScreen';
 import AddRefuel from './components/AddRefuel';
 import RefuelHistory from './components/RefuelHistory';
+import FilterScreen from './components/Filter';
 import {
   clearAuthToken,
   clearRegisteredUser,
@@ -36,6 +37,7 @@ type RootStackParamList = {
   Welcome: undefined;
   AddRefuel: undefined;
   RefuelHistory: undefined;
+  Filter: undefined;
 };
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
@@ -135,6 +137,7 @@ export default function App() {
                   </Stack.Screen>
                   <Stack.Screen name="AddRefuel" component={AddRefuel} />
                   <Stack.Screen name="RefuelHistory" component={RefuelHistory} />
+                  <Stack.Screen name="Filter" component={FilterScreen} />
                 </>
               ) : (
                 <>
