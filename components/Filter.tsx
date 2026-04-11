@@ -9,7 +9,7 @@ interface FilterProps {
   navigation: any; // Type this properly if needed
 }
 
-type SortOption = 'latest' | 'oldest' | 'cheapest' | 'mostExpensive';
+type SortOption = 'none' | 'latest' | 'cheapest' | 'nearest';
 
 interface Filters {
   fuelTypes: string[];
@@ -55,7 +55,7 @@ export default function FilterScreen({ navigation }: FilterProps) {
   };
 
   const handleClear = async () => {
-    const defaultFilters = { fuelTypes: [], sortBy: 'latest' as SortOption };
+const defaultFilters = { fuelTypes: [], sortBy: 'none' as SortOption };
     setFilters(defaultFilters);
     try {
       await AsyncStorage.removeItem('priceFilters');
@@ -94,25 +94,25 @@ export default function FilterScreen({ navigation }: FilterProps) {
               onPress={() => setMenuVisible(true)}
               style={styles.menuButton}
             >
-              {filters.sortBy === 'latest' ? 'Uusin ensin' : 
-               filters.sortBy === 'oldest' ? 'Vanhin ensin' :
-               filters.sortBy === 'cheapest' ? 'Halvin ensin' : 'Kallein ensin'}
+              {filters.sortBy === 'none' ? 'Ei valinta' :
+               filters.sortBy === 'latest' ? 'Uusin ensin' : 
+               filters.sortBy === 'cheapest' ? 'Halvin ensin' : 'Lähimpänä ensin'}
             </Button>
           }
         >
+          <Menu.Item
+            onPress={() => {
+              setFilters(prev => ({ ...prev, sortBy: 'none' }));
+              setMenuVisible(false);
+            }}
+            title="Ei valinta"
+          />
           <Menu.Item
             onPress={() => {
               setFilters(prev => ({ ...prev, sortBy: 'latest' }));
               setMenuVisible(false);
             }}
             title="Uusin ensin"
-          />
-          <Menu.Item
-            onPress={() => {
-              setFilters(prev => ({ ...prev, sortBy: 'oldest' }));
-              setMenuVisible(false);
-            }}
-            title="Vanhin ensin"
           />
           <Menu.Item
             onPress={() => {
@@ -123,10 +123,10 @@ export default function FilterScreen({ navigation }: FilterProps) {
           />
           <Menu.Item
             onPress={() => {
-              setFilters(prev => ({ ...prev, sortBy: 'mostExpensive' }));
+              setFilters(prev => ({ ...prev, sortBy: 'nearest' }));
               setMenuVisible(false);
             }}
-            title="Kallein ensin"
+            title="Lähimpänä ensin"
           />
         </Menu>
       </ScrollView>
