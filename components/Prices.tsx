@@ -3,14 +3,18 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Card, Text, Button } from 'react-native-paper';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as Location from 'expo-location';
 import { brandColors } from '../theme';
 import { useEffect, useState, useCallback } from 'react';
+import type { LatLng } from 'react-native-maps';
 
 type FuelPrice = {
   station_name: string
   fuel_type: string
   price: number
   updated_text: string
+  lat?: number | null
+  lon?: number | null
 }
 
 type StationGroup = {
@@ -20,7 +24,44 @@ type StationGroup = {
 
 type Filters = {
   fuelTypes: string[];
-  sortBy: 'latest' | 'oldest' | 'cheapest' | 'mostExpensive';
+  sortBy: 'none' | 'latest' | 'cheapest' | 'nearest';
+}
+
+function toRadians(value: number): number {
+  return (value * Math.PI) / 180;
+}
+
+function haversineMeters(a: LatLng, b: LatLng): number {
+  const earthRadius = 6371000;
+  const latitudeDelta = toRadians(b.latitude - a.latitude);
+  const longitudeDelta = toRadians(b.longitude - a.longitude);
+  const latitude1 = toRadians(a.latitude);
+  const latitude2 = toRadians(b.latitude);
+
+  const value =
+    Math.sin(latitudeDelta / 2) * Math.sin(latitudeDelta / 2) +
+    Math.sin(longitudeDelta / 2) *
+      Math.sin(longitudeDelta / 2) *
+      Math.cos(latitude1) *
+      Math.cos(latitude2);
+
+  return 2 * earthRadius * Math.atan2(Math.sqrt(value), Math.sqrt(1 - value));
+}
+
+function formatDistance(distanceMeters: number): string {
+  if (distanceMeters < 1000) {
+    return `${Math.round(distanceMeters / 100) * 0.1} km`;
+  }
+  return `${(distanceMeters / 1000).toFixed(1)} km`;
+}
+
+function getFuelSortOrder(fuelType: string | null | undefined): number {
+  if (!fuelType) return 999;
+  const fuelLower = fuelType.toLowerCase();
+  if (fuelLower === '95') return 0;
+  if (fuelLower === '98') return 1;
+  if (fuelLower === 'diesel') return 2;
+  return 999; // unknown fuels at the end
 }
 
 export default function PricesScreen() {
@@ -28,10 +69,36 @@ export default function PricesScreen() {
   const [filteredData, setFilteredData] = useState<StationGroup[]>([]);
   const [loading, setLoading] = useState(true);
   const [filters, setFilters] = useState<Filters>({ fuelTypes: [], sortBy: 'latest' });
+  const [currentLocation, setCurrentLocation] = useState<LatLng | null>(null);
+  const [locationError, setLocationError] = useState<string | null>(null);
   const navigation = useNavigation();
 
   const API_KEY = process.env.EXPO_PUBLIC_DATABASE_API_KEY
   const API_URL = 'http://204.168.156.110:3000/api/all'
+
+  // Get current location
+  useEffect(() => {
+    const getLocation = async () => {
+      try {
+        const permission = await Location.requestForegroundPermissionsAsync();
+        if (permission.granted) {
+          const location = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+          setCurrentLocation({
+            latitude: location.coords.latitude,
+            longitude: location.coords.longitude,
+          });
+          setLocationError(null);
+        } else {
+          setLocationError('Sijaintilupa evätty');
+        }
+      } catch (error) {
+        setLocationError('Sijainnin hakeminen epäonnistui');
+        console.error(error);
+      }
+    };
+
+    getLocation();
+  }, []);
 
   useEffect(() => {
     fetch(API_URL, {
@@ -93,7 +160,7 @@ export default function PricesScreen() {
   useEffect(() => {
     let filtered = data;
 
-    // Filter by fuel types
+    // Filter by fuel types - show station only if it has at least one selected fuel type
     if (filters.fuelTypes.length > 0) {
       filtered = filtered.map(station => ({
         ...station,
@@ -102,38 +169,46 @@ export default function PricesScreen() {
     }
 
     // Sort stations
-    if (filters.sortBy === 'latest' || filters.sortBy === 'oldest') {
+    if (filters.sortBy === 'latest') {
       filtered = filtered.sort((a, b) => {
         const latestA = a.fuels && a.fuels.length > 0 ? Math.max(...a.fuels.map(f => f.updated_text ? new Date(f.updated_text).getTime() : 0)) : 0;
         const latestB = b.fuels && b.fuels.length > 0 ? Math.max(...b.fuels.map(f => f.updated_text ? new Date(f.updated_text).getTime() : 0)) : 0;
-        return filters.sortBy === 'latest' ? latestB - latestA : latestA - latestB;
+        return latestB - latestA;
       });
-    } else if (filters.sortBy === 'cheapest' || filters.sortBy === 'mostExpensive') {
+    } else if (filters.sortBy === 'cheapest') {
       filtered = filtered.sort((a, b) => {
         const avgPriceA = a.fuels && a.fuels.length > 0 ? a.fuels.reduce((sum, f) => sum + (f.price || 0), 0) / a.fuels.length : 0;
         const avgPriceB = b.fuels && b.fuels.length > 0 ? b.fuels.reduce((sum, f) => sum + (f.price || 0), 0) / b.fuels.length : 0;
-        return filters.sortBy === 'cheapest' ? avgPriceA - avgPriceB : avgPriceB - avgPriceA;
+        return avgPriceA - avgPriceB;
+      });
+    } else if (filters.sortBy === 'nearest' && currentLocation) {
+      filtered = filtered.sort((a, b) => {
+        const distanceA = a.fuels?.[0]?.lat && a.fuels?.[0]?.lon
+          ? haversineMeters(currentLocation, {
+              latitude: a.fuels[0].lat,
+              longitude: a.fuels[0].lon,
+            })
+          : Infinity;
+        const distanceB = b.fuels?.[0]?.lat && b.fuels?.[0]?.lon
+          ? haversineMeters(currentLocation, {
+              latitude: b.fuels[0].lat,
+              longitude: b.fuels[0].lon,
+            })
+          : Infinity;
+        return distanceA - distanceB;
       });
     }
 
-    // Sort fuels within each station
+    // Sort fuels within each station (always in order: 95, 98, Diesel)
     filtered = filtered.map(station => ({
       ...station,
       fuels: station.fuels ? [...station.fuels].sort((a, b) => {
-        if (filters.sortBy === 'latest' || filters.sortBy === 'oldest') {
-          const dateA = a.updated_text ? new Date(a.updated_text).getTime() : 0;
-          const dateB = b.updated_text ? new Date(b.updated_text).getTime() : 0;
-          return filters.sortBy === 'latest' ? dateB - dateA : dateA - dateB;
-        } else {
-          const priceA = a.price || 0;
-          const priceB = b.price || 0;
-          return filters.sortBy === 'cheapest' ? priceA - priceB : priceB - priceA;
-        }
+        return getFuelSortOrder(a.fuel_type) - getFuelSortOrder(b.fuel_type);
       }) : []
     }));
 
     setFilteredData(filtered);
-  }, [data, filters]);
+  }, [data, filters, currentLocation]);
 
   return (
     <SafeAreaView edges={['top', 'left', 'right']} style={styles.container}>
@@ -152,24 +227,38 @@ export default function PricesScreen() {
         <FlatList
           data={filteredData}
           keyExtractor={item => item.station_name}
-          renderItem={({ item }) => (
-            <Card mode="contained" style={styles.card}>
-              <Card.Content>
-                <Text style={styles.station}>{item.station_name}</Text>
+          renderItem={({ item }) => {
+            const distance = currentLocation && item.fuels?.[0]?.lat && item.fuels?.[0]?.lon
+              ? haversineMeters(currentLocation, {
+                  latitude: item.fuels[0].lat,
+                  longitude: item.fuels[0].lon,
+                })
+              : null;
 
-                {item.fuels && item.fuels.map(fuel => (
-                  <View key={fuel.fuel_type} style={styles.fuelRow}>
-                    <Text style={styles.fuelType}>{fuel.fuel_type}</Text>
-                    <Text style={styles.price}>{fuel.price ? Number(fuel.price).toFixed(3) : 'N/A'} €</Text>
+            return (
+              <Card mode="contained" style={styles.card}>
+                <Card.Content>
+                  <View style={styles.stationHeader}>
+                    <Text style={styles.station}>{item.station_name}</Text>
+                    {distance !== null && (
+                      <Text style={styles.distance}>{formatDistance(distance)}</Text>
+                    )}
                   </View>
-                ))}
 
-                <Text style={styles.updated}>
-                  Päivitetty: {item.fuels && item.fuels[0] ? item.fuels[0].updated_text : 'N/A'}
-                </Text>
-              </Card.Content>
-            </Card>
-          )}
+                  {item.fuels && item.fuels.map(fuel => (
+                    <View key={fuel.fuel_type} style={styles.fuelRow}>
+                      <Text style={styles.fuelType}>{fuel.fuel_type}</Text>
+                      <Text style={styles.price}>{fuel.price ? Number(fuel.price).toFixed(3) : 'N/A'} €</Text>
+                    </View>
+                  ))}
+
+                  <Text style={styles.updated}>
+                    Päivitetty: {item.fuels && item.fuels[0] ? item.fuels[0].updated_text : 'N/A'}
+                  </Text>
+                </Card.Content>
+              </Card>
+            );
+          }}
           contentContainerStyle={{ paddingBottom: 20 }}
         />
       )}
@@ -203,11 +292,25 @@ const styles = StyleSheet.create({
     marginBottom: 10,
   },
 
+  stationHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+
   station: {
     fontWeight: '700',
     color: brandColors.forest,
     fontSize: 16,
-    marginBottom: 8,
+    flex: 1,
+  },
+
+  distance: {
+    fontWeight: '600',
+    color: brandColors.forestSoft,
+    fontSize: 14,
+    marginLeft: 8,
   },
 
   fuelRow: {
