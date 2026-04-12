@@ -13,6 +13,13 @@ import MapView, { Marker, Polyline, UrlTile, type LatLng } from 'react-native-ma
 import type { RecommendedFuelStop } from '../services/fuelRouting';
 import { brandColors } from '../theme';
 
+type GasStation = {
+  station_id?: string;
+  station_name?: string;
+  lat: number;
+  lon: number;
+};
+
 type NavigationInstruction = {
   distanceLabel: string;
   instruction: string;
@@ -48,6 +55,7 @@ interface MapProps {
   routeBannerSubtitle: string;
   routeBannerTitle: string;
   routeCoords: LatLng[];
+  gasStations: GasStation[];
 }
 
 const initialDelta = {
@@ -113,6 +121,7 @@ export default function Map({
   routeBannerSubtitle,
   routeBannerTitle,
   routeCoords,
+  gasStations = []
 }: MapProps) {
   const [isNavigationPanelHidden, setIsNavigationPanelHidden] = useState(false);
 
@@ -127,6 +136,26 @@ export default function Map({
   const navigationIconName = getInstructionIconName(navigationInstruction?.type);
   const shouldShowBottomCard = !isNavigating || !isNavigationPanelHidden;
   const shouldShowRestoreButton = isNavigating && isNavigationPanelHidden;
+  const validStations = (gasStations ?? []).filter(
+    (s) =>
+      typeof s.lat === "number" &&
+      typeof s.lon === "number" &&
+      Number.isFinite(s.lat) &&
+      Number.isFinite(s.lon)
+  );
+  const [mapReady, setMapReady] = useState<boolean>(false);
+  const [regionReady, setRegionReady] = useState<boolean>(false);
+  const [freezeMarkers, setFreezeMarkers] = useState<boolean>(false);
+
+  useEffect(() => {
+    if (validStations.length > 0) {
+      const timer = setTimeout(() => {
+        setFreezeMarkers(true);
+      }, 500);
+
+      return () => clearTimeout(timer);
+    }
+  }, [validStations.length]);
 
   return (
     <View style={styles.container}>
@@ -147,6 +176,8 @@ export default function Map({
         showsCompass={false}
         style={styles.map}
         toolbarEnabled={false}
+        onMapReady={() => setMapReady(true)}
+        onRegionChangeComplete={() => setRegionReady(true)}
       >
         <UrlTile
           maximumZ={19}
@@ -191,6 +222,22 @@ export default function Map({
             </View>
           </Marker>
         ) : null}
+
+        {validStations.map((station, index) => (
+          <Marker
+            key={station.station_id ?? `${station.lat}-${station.lon}-${index}`}
+            coordinate={{
+              latitude: station.lat,
+              longitude: station.lon,
+            }}
+            title={station.station_name}
+            tracksViewChanges={!freezeMarkers}
+          >
+            <View style={styles.gasStationMarkerOuter}>
+              <MaterialCommunityIcons color="#FFFFFF" name="gas-station" size={14} />
+            </View>
+          </Marker>
+        ))}
 
         {hasRoute ? (
           <>
@@ -665,5 +712,13 @@ const styles = StyleSheet.create({
     borderRadius: 28,
     justifyContent: 'center',
     padding: 6,
+  },
+  gasStationMarkerOuter: {
+    alignItems: 'center',
+    backgroundColor: '#027b0c',
+    borderRadius: 12,
+    height: 24,
+    justifyContent: 'center',
+    width: 24,
   },
 });
