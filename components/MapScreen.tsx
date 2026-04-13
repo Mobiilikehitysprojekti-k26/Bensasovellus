@@ -56,6 +56,13 @@ type NavigationInstruction = {
   type: number;
 };
 
+type GasStation = {
+  station_id?: string;
+  station_name?: string;
+  lat: number;
+  lon: number;
+};
+
 function toRadians(value: number): number {
   return (value * Math.PI) / 180;
 }
@@ -70,9 +77,9 @@ function haversineMeters(a: LatLng, b: LatLng): number {
   const value =
     Math.sin(latitudeDelta / 2) * Math.sin(latitudeDelta / 2) +
     Math.sin(longitudeDelta / 2) *
-      Math.sin(longitudeDelta / 2) *
-      Math.cos(latitude1) *
-      Math.cos(latitude2);
+    Math.sin(longitudeDelta / 2) *
+    Math.cos(latitude1) *
+    Math.cos(latitude2);
 
   return 2 * earthRadius * Math.atan2(Math.sqrt(value), Math.sqrt(1 - value));
 }
@@ -124,7 +131,7 @@ function offsetCoordinateByMeters(origin: LatLng, headingDegrees: number, distan
 
   const destinationLatitude = Math.asin(
     Math.sin(latitudeRadians) * Math.cos(angularDistance) +
-      Math.cos(latitudeRadians) * Math.sin(angularDistance) * Math.cos(headingRadians)
+    Math.cos(latitudeRadians) * Math.sin(angularDistance) * Math.cos(headingRadians)
   );
   const destinationLongitude =
     longitudeRadians +
@@ -278,8 +285,8 @@ function buildNavigationInstruction(
       currentStep.type === 10
         ? 'Perilla'
         : formatNavigationDistanceLabel(
-            measureRouteDistanceBetweenIndices(route, nearestRouteIndex, currentStep.wayPointEndIndex)
-          ),
+          measureRouteDistanceBetweenIndices(route, nearestRouteIndex, currentStep.wayPointEndIndex)
+        ),
     instruction: currentStep.instruction,
     type: currentStep.type,
   };
@@ -416,6 +423,8 @@ export default function MapScreen({ user }: MapScreenProps) {
   const [hasVisitedFuelStop, setHasVisitedFuelStop] = useState(false);
   const [isFindingFuelStop, setIsFindingFuelStop] = useState(false);
 
+  const [gasStations, setGasStations] = useState<GasStation[]>([]);
+
   const routeRenderCoords = useMemo(() => simplifyPolylineForRender(routeCoords), [routeCoords]);
   const navigationInstruction = useMemo(
     () =>
@@ -509,6 +518,34 @@ export default function MapScreen({ user }: MapScreenProps) {
 
     focusNavigationCamera(currentLocationRef.current, nextHeading);
   }, [heading, isFollowing, isNavigating]);
+
+  const API_KEY = process.env.EXPO_PUBLIC_DATABASE_API_KEY
+
+  useEffect(() => {
+    if (!currentLocation) return;
+
+    const fetchStations = async () => {
+      try {
+        const res = await fetch(
+          `http://204.168.156.110:3000/api/all?lat=${currentLocation.latitude}&lon=${currentLocation.longitude}`,
+          {
+            headers: {
+              'x-api-key': API_KEY
+            }
+          }
+        );
+
+        const data = await res.json();
+
+        setGasStations(data);
+        //console.log('Fetched stations:', data);
+      } catch (err) {
+        console.error('Failed to fetch gas stations', err);
+      }
+    };
+
+    fetchStations();
+  }, [currentLocation]);
 
   const focusNavigationCamera = (point: LatLng, headingOverride?: number | null) => {
     if (!mapRef.current) {
@@ -994,6 +1031,7 @@ export default function MapScreen({ user }: MapScreenProps) {
           routeBannerSubtitle={routeBannerSubtitle}
           routeBannerTitle={routeBannerTitle}
           routeCoords={routeRenderCoords}
+          gasStations={gasStations}
         />
       )}
 
