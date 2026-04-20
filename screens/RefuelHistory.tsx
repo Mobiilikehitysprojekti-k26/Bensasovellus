@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
-import { View, Text, FlatList, StyleSheet, TouchableOpacity } from "react-native";
+import { View, Text, FlatList, StyleSheet, TouchableOpacity, Alert } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { FAB } from "react-native-paper";
-import { getRefuelHistory } from "../storage/refuelStorage";
+import { useFocusEffect } from "@react-navigation/native";
+import { FAB, IconButton } from "react-native-paper";
+import { getRefuelHistory, deleteRefuel } from "../storage/refuelStorage";
 import { brandColors } from "../theme";
 
 interface RefuelEntry {
@@ -17,20 +18,50 @@ interface RefuelEntry {
 
 interface RefuelHistoryProps {
   navigation: {
-    navigate: (screen: "AddRefuel") => void;
+    navigate: (screen: "AddRefuel", params?: any) => void;
   };
 }
 
 export default function RefuelHistory({ navigation }: RefuelHistoryProps) {
   const [history, setHistory] = useState<RefuelEntry[]>([]);
 
+  const loadHistory = async () => {
+    const data = await getRefuelHistory();
+    setHistory(data.reverse());
+  };
+
   useEffect(() => {
-    const load = async () => {
-      const data = await getRefuelHistory();
-      setHistory(data.reverse());
-    };
-    load();
+    loadHistory();
   }, []);
+
+  useFocusEffect(() => {
+    loadHistory();
+  });
+
+  const handleDelete = (entry: RefuelEntry) => {
+    Alert.alert(
+      "Poista tankkaus",
+      `Poistetaanko tankkaus ${entry.station}:sta (${new Date(entry.date).toLocaleDateString("fi-FI")})?`,
+      [
+        {
+          text: "Peruuta",
+          style: "cancel",
+        },
+        {
+          text: "Poista",
+          style: "destructive",
+          onPress: async () => {
+            await deleteRefuel(entry.id);
+            await loadHistory();
+          },
+        },
+      ]
+    );
+  };
+
+  const handleEdit = (entry: RefuelEntry) => {
+    navigation.navigate("AddRefuel", { entry });
+  };
 
   const thisMonth = new Date().getMonth();
   const monthEntries = history.filter(
@@ -66,10 +97,28 @@ export default function RefuelHistory({ navigation }: RefuelHistoryProps) {
           keyExtractor={(item) => item.id}
           renderItem={({ item }) => (
             <View style={styles.entryCard}>
-              <Text style={styles.station}>{item.station}</Text>
-              <Text style={styles.date}>
-                {new Date(item.date).toLocaleDateString("fi-FI")}
-              </Text>
+              <View style={styles.entryHeader}>
+                <View style={styles.entryInfo}>
+                  <Text style={styles.station}>{item.station}</Text>
+                  <Text style={styles.date}>
+                    {new Date(item.date).toLocaleDateString("fi-FI")}
+                  </Text>
+                </View>
+                <View style={styles.buttonContainer}>
+                  <IconButton
+                    icon="pencil"
+                    size={18}
+                    iconColor={brandColors.forest}
+                    onPress={() => handleEdit(item)}
+                  />
+                  <IconButton
+                    icon="trash-can"
+                    size={18}
+                    iconColor="#E74C3C"
+                    onPress={() => handleDelete(item)}
+                  />
+                </View>
+              </View>
 
               <Text style={styles.detail}>Määrä {item.liters} L</Text>
               <Text style={styles.detail}>Hinta {item.pricePerLiter.toFixed(2)} €/l</Text>
@@ -82,6 +131,8 @@ export default function RefuelHistory({ navigation }: RefuelHistoryProps) {
 
         <FAB
           icon="plus"
+          label="Lisää"
+          color="#FFFFFF"
           style={styles.fab}
           onPress={() => navigation.navigate("AddRefuel")}
         />
@@ -143,6 +194,15 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     marginBottom: 10,
   },
+  entryHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    marginBottom: 8,
+  },
+  entryInfo: {
+    flex: 1,
+  },
   station: {
     fontSize: 16,
     fontWeight: "700",
@@ -151,6 +211,10 @@ const styles = StyleSheet.create({
   date: {
     color: brandColors.forestSoft,
     marginBottom: 6,
+  },
+  buttonContainer: {
+    flexDirection: "row",
+    marginRight: -8,
   },
   detail: {
     color: brandColors.forestSoft,
