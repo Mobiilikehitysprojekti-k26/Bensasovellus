@@ -23,3 +23,20 @@ export const getRefuelHistory = async (): Promise<RefuelEntry[]> => {
   const existing = await AsyncStorage.getItem(KEY);
   return existing ? JSON.parse(existing) : [];
 };
+
+export const deleteRefuel = async (id: string): Promise<void> => {
+  const existing = await AsyncStorage.getItem(KEY);
+  const history: RefuelEntry[] = existing ? JSON.parse(existing) : [];
+  const filtered = history.filter(entry => entry.id !== id);
+  await AsyncStorage.setItem(KEY, JSON.stringify(filtered));
+};
+
+export const updateRefuel = async (id: string, entry: RefuelEntry): Promise<void> => {
+  const existing = await AsyncStorage.getItem(KEY);
+  const history: RefuelEntry[] = existing ? JSON.parse(existing) : [];
+  const index = history.findIndex(e => e.id === id);
+  if (index !== -1) {
+    history[index] = entry;
+    await AsyncStorage.setItem(KEY, JSON.stringify(history));
+  }
+};

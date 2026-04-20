@@ -1,6 +1,6 @@
-import { ActivityIndicator, FlatList, StyleSheet, View } from 'react-native';
+import { ActivityIndicator, FlatList, StyleSheet, View, ScrollView } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Card, Text, Button } from 'react-native-paper';
+import { Card, Text, Button, Modal, Portal } from 'react-native-paper';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Location from 'expo-location';
@@ -71,6 +71,7 @@ export default function PricesScreen() {
   const [filters, setFilters] = useState<Filters>({ fuelTypes: [], sortBy: 'latest' });
   const [currentLocation, setCurrentLocation] = useState<LatLng | null>(null);
   const [locationError, setLocationError] = useState<string | null>(null);
+  const [showBonuses, setShowBonuses] = useState(false);
   const navigation = useNavigation();
 
   const API_KEY = process.env.EXPO_PUBLIC_DATABASE_API_KEY
@@ -216,10 +217,52 @@ export default function PricesScreen() {
         <Text style={styles.title} variant="headlineSmall">
           Hinnat
         </Text>
-        <Button mode="contained" onPress={() => navigation.getParent()?.navigate('Filter')}>
-          Suodata
-        </Button>
+        <View style={styles.buttonRow}>
+          <Button mode="contained" onPress={() => navigation.getParent()?.navigate('Filter')}>
+            Suodata
+          </Button>
+          <Button 
+            mode="contained" 
+            onPress={() => setShowBonuses(true)}
+            buttonColor="#FFD700"
+          >
+            Bonukset
+          </Button>
+        </View>
       </View>
+
+      <Portal>
+        <Modal
+          visible={showBonuses}
+          onDismiss={() => setShowBonuses(false)}
+          contentContainerStyle={styles.modalContent}
+        >
+          <View style={styles.modalHeader}>
+            <Text style={styles.modalTitle}>Bonukset ja tarjoukset</Text>
+            <Button onPress={() => setShowBonuses(false)} buttonColor={brandColors.forestSoft} textColor="#FFFFFF">Sulje</Button>
+          </View>
+
+          <ScrollView style={styles.bonusesContainer}>
+            <View style={styles.bonusCard}>
+              <Text style={styles.bonusStation}>ABC</Text>
+              <Text style={styles.bonusPrice}>S-etukortilla tankkausbonus jopa 5 snt/l</Text>
+              <Text style={styles.bonusDescription}>S-etukortilla S-ryhmän bonustaulukon mukaan (0,5 % – 5 %).</Text>
+            </View>
+
+            <View style={styles.bonusCard}>
+              <Text style={styles.bonusStation}>Neste</Text>
+              <Text style={styles.bonusPrice}>2 snt/l alennus</Text>
+              <Text style={styles.bonusDescription}>Vaatii Neste app sovelluksen</Text>
+            </View>
+
+            <View style={styles.bonusCard}>
+              <Text style={styles.bonusStation}>St1</Text>
+              <Text style={styles.bonusPrice}>2 snt/l alennus</Text>
+              <Text style={styles.bonusDescription}>Vaatii St1 Way -sovelluksen</Text>
+            </View>
+          </ScrollView>
+        </Modal>
+      </Portal>
 
       {loading ? (
         <ActivityIndicator size="large" />
@@ -275,15 +318,72 @@ const styles = StyleSheet.create({
   },
 
   header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
+    flexDirection: 'column',
     marginBottom: 12,
+  },
+
+  buttonRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 8,
   },
 
   title: {
     color: brandColors.forest,
     fontWeight: '700',
+  },
+
+  modalContent: {
+    backgroundColor: '#F9FFFC',
+    margin: 16,
+    borderRadius: 16,
+    padding: 0,
+    maxHeight: '80%',
+  },
+
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E0E0E0',
+  },
+
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: brandColors.forestSoft,
+  },
+
+  bonusesContainer: {
+    padding: 16,
+  },
+
+  bonusCard: {
+    marginBottom: 16,
+    paddingBottom: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E8E8E8',
+  },
+
+  bonusStation: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: brandColors.forest,
+    marginBottom: 4,
+  },
+
+  bonusPrice: {
+    fontSize: 14,
+    fontWeight: '600',
+    marginBottom: 8,
+  },
+
+  bonusDescription: {
+    fontSize: 13,
+    color: brandColors.forestSoft,
+    lineHeight: 19,
   },
 
   card: {

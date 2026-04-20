@@ -1,18 +1,50 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { View, StyleSheet } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { Text, TextInput, Button, Menu } from "react-native-paper";
-import { saveRefuel } from "../storage/refuelStorage";
+import { Text, TextInput, Button, Menu, IconButton } from "react-native-paper";
+import { saveRefuel, updateRefuel } from "../storage/refuelStorage";
 import { brandColors } from "../theme";
 
-export default function AddRefuel({ navigation }: any) {
+interface RefuelEntry {
+  id: string;
+  date: string;
+  station: string;
+  fuelType: string;
+  liters: number;
+  pricePerLiter: number;
+  totalPrice: number;
+}
+
+export default function AddRefuel({ navigation, route }: any) {
   const [station, setStation] = useState("");
   const [fuelType, setFuelType] = useState("");
   const [liters, setLiters] = useState("");
   const [pricePerLiter, setPricePerLiter] = useState("");
   const [menuVisible, setMenuVisible] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editingDate, setEditingDate] = useState<string>(new Date().toISOString());
 
-  const formattedDate = new Date().toLocaleDateString("fi-FI");
+  const isEditing = route?.params?.entry !== undefined;
+  const entry = route?.params?.entry as RefuelEntry | undefined;
+
+  useEffect(() => {
+    if (entry) {
+      setEditingId(entry.id);
+      setStation(entry.station);
+      setFuelType(entry.fuelType);
+      setLiters(entry.liters.toString());
+      setPricePerLiter(entry.pricePerLiter.toString());
+      setEditingDate(entry.date);
+    }
+  }, [entry]);
+
+  const formattedDate = new Date(editingDate).toLocaleDateString("fi-FI");
+
+  const handleDateChange = (offset: number) => {
+    const newDate = new Date(editingDate);
+    newDate.setDate(newDate.getDate() + offset);
+    setEditingDate(newDate.toISOString());
+  };
 
   const handleSave = async () => {
     if (!station || !fuelType || !liters || !pricePerLiter) return;
@@ -20,9 +52,9 @@ export default function AddRefuel({ navigation }: any) {
     const litersValue = parseFloat(liters.replace(",", "."));
     const priceValue = parseFloat(pricePerLiter.replace(",", "."));
 
-    const entry = {
-      id: Date.now().toString(),
-      date: new Date().toISOString(),
+    const entryData = {
+      id: editingId || Date.now().toString(),
+      date: editingDate,
       station,
       fuelType,
       liters: litersValue,
@@ -30,15 +62,35 @@ export default function AddRefuel({ navigation }: any) {
       totalPrice: litersValue * priceValue,
     };
 
-    await saveRefuel(entry);
+    if (isEditing && editingId) {
+      await updateRefuel(editingId, entryData);
+    } else {
+      await saveRefuel(entryData);
+    }
     navigation.navigate("RefuelHistory");
   };
 
   return (
     <SafeAreaView style={{ flex: 1 }}>
       <View style={styles.container}>
+        <View style={styles.dateButtonRow}>
+          <IconButton
+            icon="chevron-left"
+            size={24}
+            iconColor={brandColors.forest}
+            onPress={() => handleDateChange(-1)}
+          />
+          <Text style={styles.dateLargeText}>{formattedDate}</Text>
+          <IconButton
+            icon="chevron-right"
+            size={24}
+            iconColor={brandColors.forest}
+            onPress={() => handleDateChange(1)}
+          />
+        </View>
+
         <Text style={styles.title} variant="headlineSmall">
-          Lisää tankkaus
+          {isEditing ? "Muokkaa tankkaus" : "Lisää tankkaus"}
         </Text>
 
         <Text style={styles.dateLabel}>Päivämäärä: {formattedDate}</Text>
@@ -92,8 +144,9 @@ export default function AddRefuel({ navigation }: any) {
           onPress={handleSave}
           style={styles.button}
           buttonColor={brandColors.forest}
+          textColor="#FFFFFF"
         >
-          Tallenna tankkaus
+          {isEditing ? "Päivitä tankkaus" : "Lisää tankkaus"}
         </Button>
       </View>
     </SafeAreaView>
@@ -115,6 +168,21 @@ const styles = StyleSheet.create({
     color: brandColors.forestSoft,
     marginBottom: 16,
     fontSize: 14,
+  },
+  dateButtonRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 20,
+    backgroundColor: "#F9FFFC",
+    borderRadius: 8,
+    paddingVertical: 8,
+  },
+  dateLargeText: {
+    fontSize: 18,
+    fontWeight: "600",
+    color: brandColors.forest,
+    marginHorizontal: 16,
   },
   input: {
     marginBottom: 14,
