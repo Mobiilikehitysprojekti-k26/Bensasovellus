@@ -8,13 +8,13 @@ import {
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { ActivityIndicator, PaperProvider } from 'react-native-paper';
-import LoginScreen from './components/LoginScreen';
-import MainTabs from './components/MainTabs';
-import RegistrationScreen from './components/RegistrationScreen';
-import WelcomeScreen from './components/WelcomeScreen';
-import AddRefuel from './components/AddRefuel';
-import RefuelHistory from './components/RefuelHistory';
-import FilterScreen from './components/Filter';
+import MainTabs from './navigation/MainTabs';
+import AddRefuel from './screens/AddRefuel';
+import FilterScreen from './screens/Filter';
+import LoginScreen from './screens/LoginScreen';
+import RefuelHistory from './screens/RefuelHistory';
+import RegistrationScreen from './screens/RegistrationScreen';
+import WelcomeScreen from './screens/WelcomeScreen';
 import {
   clearAuthToken,
   clearRegisteredUser,

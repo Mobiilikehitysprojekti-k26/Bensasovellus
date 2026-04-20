@@ -27,7 +27,7 @@ import {
   type DrivingRouteStep,
 } from '../services/routing';
 import { brandColors } from '../theme';
-import Map from './Map';
+import Map from '../components/Map';
 
 interface MapScreenProps {
   user: RegisteredUser | null;

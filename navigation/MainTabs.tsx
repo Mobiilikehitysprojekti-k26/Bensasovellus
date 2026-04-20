@@ -3,9 +3,9 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import type { RegisteredUser } from '../storage/authStorage';
 import { brandColors } from '../theme';
-import MapScreen from './MapScreen';
-import PricesScreen from './Prices';
-import ProfileScreen from './Profile';
+import MapScreen from '../screens/MapScreen';
+import PricesScreen from '../screens/Prices';
+import ProfileScreen from '../screens/Profile';
 
 interface MainTabsProps {
   onDeleteAccount: () => Promise<void> | void;
