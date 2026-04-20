@@ -15,7 +15,13 @@ interface RefuelEntry {
   totalPrice: number;
 }
 
-export default function RefuelHistory({ navigation }) {
+interface RefuelHistoryProps {
+  navigation: {
+    navigate: (screen: "AddRefuel") => void;
+  };
+}
+
+export default function RefuelHistory({ navigation }: RefuelHistoryProps) {
   const [history, setHistory] = useState<RefuelEntry[]>([]);
 
   useEffect(() => {
