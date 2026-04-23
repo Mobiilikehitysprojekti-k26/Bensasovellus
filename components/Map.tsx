@@ -12,6 +12,8 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import MapView, { Marker, Polyline, UrlTile, type LatLng } from 'react-native-maps';
 import type { RecommendedFuelStop } from '../services/fuelRouting';
 import { brandColors } from '../theme';
+import { Image } from 'react-native';
+import { getStationLogo } from '../utils/getStationLogo';
 
 type GasStation = {
   station_id?: string;
@@ -234,7 +236,12 @@ export default function Map({
             tracksViewChanges={!freezeMarkers}
           >
             <View style={styles.gasStationMarkerOuter}>
-              <MaterialCommunityIcons color="#FFFFFF" name="gas-station" size={14} />
+              <Image 
+                source={getStationLogo(station.station_name)}
+                style={{ width: 22, height: 22 }}
+                resizeMode='contain'
+              />
+              {/* <MaterialCommunityIcons color="#FFFFFF" name="gas-station" size={14} /> */}
             </View>
           </Marker>
         ))}
@@ -715,10 +722,12 @@ const styles = StyleSheet.create({
   },
   gasStationMarkerOuter: {
     alignItems: 'center',
-    backgroundColor: '#027b0c',
-    borderRadius: 12,
-    height: 24,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 8,
+    height: 30,
+    width: 30,
     justifyContent: 'center',
-    width: 24,
+    borderWidth: 1,
+    borderColor: '#000000'
   },
 });
