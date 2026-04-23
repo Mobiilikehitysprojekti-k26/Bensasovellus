@@ -1,47 +1,51 @@
-import { useEffect, useState } from "react";
-import { View, Text, FlatList, StyleSheet, TouchableOpacity, Alert } from "react-native";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { Alert, FlatList, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { useFocusEffect } from "@react-navigation/native";
 import { FAB, IconButton } from "react-native-paper";
-import { getRefuelHistory, deleteRefuel } from "../storage/refuelStorage";
+import { deleteRefuel, getRefuelHistory, type RefuelEntry } from "../storage/refuelStorage";
 import { brandColors } from "../theme";
 
-interface RefuelEntry {
-  id: string;
-  date: string;
-  station: string;
-  fuelType: string;
-  liters: number;
-  pricePerLiter: number;
-  totalPrice: number;
-}
+const INITIAL_VISIBLE_ITEMS = 4;
 
 interface RefuelHistoryProps {
   navigation: {
-    navigate: (screen: "AddRefuel", params?: any) => void;
+    goBack: () => void;
+    navigate: (screen: "AddRefuel", params?: { entry?: RefuelEntry }) => void;
   };
+}
+
+function formatDate(value: string): string {
+  return new Date(value).toLocaleDateString("fi-FI");
 }
 
 export default function RefuelHistory({ navigation }: RefuelHistoryProps) {
   const [history, setHistory] = useState<RefuelEntry[]>([]);
+  const [showAll, setShowAll] = useState(false);
 
-  const loadHistory = async () => {
+  const loadHistory = useCallback(async () => {
     const data = await getRefuelHistory();
-    setHistory(data.reverse());
-  };
-
-  useEffect(() => {
-    loadHistory();
+    const sortedHistory = [...data].sort(
+      (first, second) => new Date(second.date).getTime() - new Date(first.date).getTime()
+    );
+    setHistory(sortedHistory);
   }, []);
 
-  useFocusEffect(() => {
-    loadHistory();
-  });
+  useEffect(() => {
+    void loadHistory();
+  }, [loadHistory]);
+
+  useFocusEffect(
+    useCallback(() => {
+      void loadHistory();
+    }, [loadHistory])
+  );
 
   const handleDelete = (entry: RefuelEntry) => {
     Alert.alert(
       "Poista tankkaus",
-      `Poistetaanko tankkaus ${entry.station}:sta (${new Date(entry.date).toLocaleDateString("fi-FI")})?`,
+      `Poistetaanko tankkaus ${entry.station}:sta (${formatDate(entry.date)})?`,
       [
         {
           text: "Peruuta",
@@ -59,176 +63,434 @@ export default function RefuelHistory({ navigation }: RefuelHistoryProps) {
     );
   };
 
-  const handleEdit = (entry: RefuelEntry) => {
-    navigation.navigate("AddRefuel", { entry });
-  };
+  const now = new Date();
+  const currentMonth = now.getMonth();
+  const currentYear = now.getFullYear();
 
-  const thisMonth = new Date().getMonth();
-  const monthEntries = history.filter(
-    (e) => new Date(e.date).getMonth() === thisMonth
+  const monthEntries = useMemo(
+    () =>
+      history.filter((entry) => {
+        const entryDate = new Date(entry.date);
+        return entryDate.getMonth() === currentMonth && entryDate.getFullYear() === currentYear;
+      }),
+    [currentMonth, currentYear, history]
   );
 
-  const totalSpent = monthEntries.reduce((sum, e) => sum + e.totalPrice, 0);
-  const totalLiters = monthEntries.reduce((sum, e) => sum + e.liters, 0);
+  const totalSpent = monthEntries.reduce((sum, entry) => sum + entry.totalPrice, 0);
+  const totalLiters = monthEntries.reduce((sum, entry) => sum + entry.liters, 0);
   const avgPrice = totalLiters > 0 ? totalSpent / totalLiters : 0;
 
+  const visibleHistory = showAll ? history : history.slice(0, INITIAL_VISIBLE_ITEMS);
+  const hasMoreHistory = history.length > INITIAL_VISIBLE_ITEMS;
+  const hiddenItemsCount = Math.max(0, history.length - INITIAL_VISIBLE_ITEMS);
+  const showToggleLabel = showAll
+    ? "Näytä vähemmän"
+    : `Näytä enemmän (${hiddenItemsCount})`;
+
   return (
-    <SafeAreaView style={{ flex: 1 }}>
-      <View style={styles.container}>
-        <Text style={styles.header}>Tankkaushistoria</Text>
+    <SafeAreaView edges={["top", "left", "right"]} style={styles.screen}>
+      <View style={styles.headerRow}>
+        <IconButton
+          icon="chevron-left"
+          iconColor="#222222"
+          onPress={() => navigation.goBack()}
+          size={28}
+          style={styles.backButton}
+        />
+        <Text style={styles.headerTitle}>Tankkaushistoria</Text>
+      </View>
 
-        <View style={styles.summaryCard}>
-          <Text style={styles.summaryTitle}>Tämä kuukausi</Text>
+      <FlatList
+        contentContainerStyle={styles.listContent}
+        data={visibleHistory}
+        keyExtractor={(item) => item.id}
+        ListEmptyComponent={
+          <View style={styles.emptyCard}>
+            <Text style={styles.emptyTitle}>Ei vielä tankkauksia</Text>
+            <Text style={styles.emptyText}>Lisää ensimmäinen tankkaus oikean alakulman plus-painikkeesta.</Text>
+          </View>
+        }
+        ListHeaderComponent={
+          <View>
+            <View style={styles.summaryCard}>
+              <View style={styles.summaryAccentLine} />
 
-          <Text style={styles.summaryMoney}>{totalSpent.toFixed(0)}€</Text>
-          <Text style={styles.summarySub}>Yhteensä {totalLiters.toFixed(0)} L</Text>
-          <Text style={styles.summarySub}>Keskihinta {avgPrice.toFixed(2)} €/l</Text>
-        </View>
-
-        <View style={styles.listHeaderRow}>
-          <Text style={styles.listHeader}>Viimeisimmät tapahtumat</Text>
-          <TouchableOpacity>
-            <Text style={styles.showAll}>Näytä kaikki</Text>
-          </TouchableOpacity>
-        </View>
-
-        <FlatList
-          data={history.slice(0, 10)}
-          keyExtractor={(item) => item.id}
-          renderItem={({ item }) => (
-            <View style={styles.entryCard}>
-              <View style={styles.entryHeader}>
-                <View style={styles.entryInfo}>
-                  <Text style={styles.station}>{item.station}</Text>
-                  <Text style={styles.date}>
-                    {new Date(item.date).toLocaleDateString("fi-FI")}
-                  </Text>
+              <View style={styles.summaryTop}>
+                <View>
+                  <Text style={styles.summaryTitle}>TÄMÄ KUUKAUSI</Text>
+                  <Text style={styles.summaryTotal}>{totalSpent.toFixed(0)}€</Text>
                 </View>
-                <View style={styles.buttonContainer}>
-                  <IconButton
-                    icon="pencil"
-                    size={18}
-                    iconColor={brandColors.forest}
-                    onPress={() => handleEdit(item)}
-                  />
-                  <IconButton
-                    icon="trash-can"
-                    size={18}
-                    iconColor="#E74C3C"
-                    onPress={() => handleDelete(item)}
-                  />
+
+                <View style={styles.summaryTrendCircle}>
+                  <MaterialCommunityIcons color={brandColors.forestSoft} name="trending-up" size={30} />
                 </View>
               </View>
 
-              <Text style={styles.detail}>Määrä {item.liters} L</Text>
-              <Text style={styles.detail}>Hinta {item.pricePerLiter.toFixed(2)} €/l</Text>
+              <View style={styles.summaryDivider} />
 
-              <Text style={styles.totalPrice}>{item.totalPrice.toFixed(0)}€</Text>
+              <View style={styles.summaryBottom}>
+                <View style={styles.summaryStatBlock}>
+                  <View style={styles.summaryIconCircle}>
+                    <MaterialCommunityIcons color={brandColors.forestSoft} name="water-outline" size={21} />
+                  </View>
+
+                  <View>
+                    <Text style={styles.summaryStatLabel}>Yhteensä</Text>
+                    <Text style={styles.summaryStatValue}>{totalLiters.toFixed(0)} L</Text>
+                  </View>
+                </View>
+
+                <View style={styles.summaryStatBlock}>
+                  <View style={styles.summaryIconCircle}>
+                    <MaterialCommunityIcons color={brandColors.forestSoft} name="gas-station-outline" size={21} />
+                  </View>
+
+                  <View>
+                    <Text style={styles.summaryStatLabel}>Keskihinta</Text>
+                    <Text style={styles.summaryStatValue}>{avgPrice.toFixed(2)} €/l</Text>
+                  </View>
+                </View>
+              </View>
             </View>
-          )}
-          contentContainerStyle={{ paddingBottom: 120 }}
-        />
 
-        <FAB
-          icon="plus"
-          label="Lisää"
-          color="#FFFFFF"
-          style={styles.fab}
-          onPress={() => navigation.navigate("AddRefuel")}
-        />
-      </View>
+            <View style={styles.sectionHeaderRow}>
+              <Text style={styles.sectionTitle}>VIIMEISIMMÄT TAPAHTUMAT</Text>
+
+            </View>
+            {hasMoreHistory ? (
+              <TouchableOpacity
+                activeOpacity={0.86}
+                onPress={() => setShowAll((current) => !current)}
+                style={[
+                  styles.showToggleButton,
+                  showAll ? styles.showToggleButtonExpanded : null,
+                ]}
+              >
+                <MaterialCommunityIcons
+                  color={showAll ? brandColors.forest : "#FFFFFF"}
+                  name={showAll ? "chevron-up" : "chevron-down"}
+                  size={18}
+                />
+                <Text
+                  style={[
+                    styles.showToggleText,
+                    showAll ? styles.showToggleTextExpanded : null,
+                  ]}
+                >
+                  {showToggleLabel}
+                </Text>
+              </TouchableOpacity>
+            ) : null}
+          </View>
+        }
+        renderItem={({ item }) => (
+          <TouchableOpacity
+            activeOpacity={0.9}
+            onLongPress={() => handleDelete(item)}
+            onPress={() => navigation.navigate("AddRefuel", { entry: item })}
+            style={styles.entryCard}
+          >
+            <View style={styles.entryHeaderRow}>
+              <View style={styles.entryMain}>
+                <View style={styles.stationCircle}>
+                  <MaterialCommunityIcons color={brandColors.forestSoft} name="map-marker-outline" size={20} />
+                </View>
+
+                <View style={styles.entryMainText}>
+                  <Text style={styles.stationName}>{item.station}</Text>
+
+                  <View style={styles.dateRow}>
+                    <MaterialCommunityIcons color="#7B7B73" name="calendar-blank-outline" size={16} />
+                    <Text style={styles.dateText}>{formatDate(item.date)}</Text>
+                  </View>
+                </View>
+              </View>
+
+              <View style={styles.entrySideColumn}>
+                <View style={styles.priceBadge}>
+                  <Text style={styles.priceBadgeText}>{item.totalPrice.toFixed(0)}€</Text>
+                </View>
+                <MaterialCommunityIcons color="#B7B7AF" name="chevron-right" size={24} />
+              </View>
+            </View>
+
+            <View style={styles.metricsRow}>
+              <View style={styles.metricBlock}>
+                <Text style={styles.metricLabel}>MÄÄRÄ</Text>
+                <Text style={styles.metricValue}>{item.liters.toFixed(0)} L</Text>
+              </View>
+
+              <View style={styles.metricBlock}>
+                <Text style={styles.metricLabel}>HINTA/L</Text>
+                <Text style={styles.metricValue}>{item.pricePerLiter.toFixed(2)} €/l</Text>
+              </View>
+            </View>
+          </TouchableOpacity>
+        )}
+      />
+
+      <FAB color="#FFFFFF" icon="plus" onPress={() => navigation.navigate("AddRefuel")} style={styles.fab} />
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
+  screen: {
+    backgroundColor: "#F7F7F2",
     flex: 1,
-    backgroundColor: "#EAF7F1",
-    padding: 16,
   },
-  header: {
-    fontSize: 24,
-    fontWeight: "700",
+  headerRow: {
+    alignItems: "center",
+    borderBottomColor: "#DADAD4",
+    borderBottomWidth: 1,
+    flexDirection: "row",
+    paddingBottom: 12,
+    paddingHorizontal: 14,
+    paddingTop: 6,
+  },
+  backButton: {
+    margin: 0,
+  },
+  headerTitle: {
     color: brandColors.forest,
-    marginBottom: 16,
+    fontSize: 20,
+    fontWeight: "800",
+    marginLeft: 8,
+  },
+  listContent: {
+    paddingBottom: 120,
+    paddingHorizontal: 16,
+    paddingTop: 20,
   },
   summaryCard: {
-    backgroundColor: "#F9FFFC",
-    padding: 20,
+    backgroundColor: "#FFFFFF",
+    borderColor: "#EBEBE6",
     borderRadius: 20,
-    marginBottom: 20,
+    borderWidth: 1,
+    marginBottom: 28,
+    overflow: "hidden",
+    padding: 20,
+    shadowColor: "#000000",
+    shadowOffset: {
+      width: 0,
+      height: 2,
+    },
+    shadowOpacity: 0.06,
+    shadowRadius: 8,
+  },
+  summaryAccentLine: {
+    backgroundColor: brandColors.mint,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    height: 6,
+    left: 0,
+    position: "absolute",
+    right: 0,
+    top: 0,
+  },
+  summaryTop: {
+    alignItems: "center",
+    flexDirection: "row",
+    justifyContent: "space-between",
   },
   summaryTitle: {
-    fontSize: 16,
-    fontWeight: "600",
     color: brandColors.forestSoft,
-  },
-  summaryMoney: {
-    fontSize: 32,
+    fontSize: 16,
     fontWeight: "700",
+    letterSpacing: 1.2,
+  },
+  summaryTotal: {
     color: brandColors.forest,
+    fontSize: 26,
+    fontWeight: "900",
     marginTop: 4,
   },
-  summarySub: {
-    fontSize: 14,
-    color: brandColors.forestSoft,
+  summaryTrendCircle: {
+    alignItems: "center",
+    backgroundColor: "#E8F8EF",
+    borderRadius: 40,
+    height: 80,
+    justifyContent: "center",
+    width: 80,
   },
-  listHeaderRow: {
+  summaryDivider: {
+    backgroundColor: "#E8E8E3",
+    height: 1,
+    marginVertical: 16,
+  },
+  summaryBottom: {
     flexDirection: "row",
     justifyContent: "space-between",
-    marginBottom: 8,
   },
-  listHeader: {
-    fontSize: 18,
-    fontWeight: "700",
+  summaryStatBlock: {
+    alignItems: "center",
+    flexDirection: "row",
+    width: "47%",
+  },
+  summaryIconCircle: {
+    alignItems: "center",
+    backgroundColor: "#F2F2EF",
+    borderRadius: 18,
+    height: 36,
+    justifyContent: "center",
+    marginRight: 10,
+    width: 36,
+  },
+  summaryStatLabel: {
+    color: "#7A7A73",
+    fontSize: 14,
+    fontWeight: "500",
+  },
+  summaryStatValue: {
     color: brandColors.forest,
+    fontSize: 19,
+    fontWeight: "700",
+    marginTop: 1,
   },
-  showAll: {
-    color: brandColors.forestSoft,
-    fontWeight: "600",
-  },
-  entryCard: {
-    backgroundColor: "#F9FFFC",
-    padding: 16,
-    borderRadius: 16,
+  sectionHeaderRow: {
     marginBottom: 10,
   },
-  entryHeader: {
+  sectionTitle: {
+    color: "#686860",
+    fontSize: 18,
+    fontWeight: "800",
+    letterSpacing: 1.1,
+  },
+  showToggleButton: {
+    alignSelf: "flex-start",
+    alignItems: "center",
+    backgroundColor: brandColors.forest,
+    borderRadius: 999,
+    flexDirection: "row",
+    marginBottom: 14,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+  },
+  showToggleButtonExpanded: {
+    backgroundColor: "#E8F8EF",
+    borderColor: brandColors.forestSoft,
+    borderWidth: 1,
+  },
+  showToggleText: {
+    color: "#FFFFFF",
+    fontSize: 14,
+    fontWeight: "700",
+    marginLeft: 4,
+  },
+  showToggleTextExpanded: {
+    color: brandColors.forest,
+  },
+  entryCard: {
+    backgroundColor: "#FFFFFF",
+    borderColor: "#EBEBE6",
+    borderRadius: 16,
+    borderWidth: 1,
+    marginBottom: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    shadowColor: "#000000",
+    shadowOffset: {
+      width: 0,
+      height: 1,
+    },
+    shadowOpacity: 0.04,
+    shadowRadius: 6,
+  },
+  entryHeaderRow: {
+    alignItems: "flex-start",
     flexDirection: "row",
     justifyContent: "space-between",
-    alignItems: "flex-start",
-    marginBottom: 8,
   },
-  entryInfo: {
-    flex: 1,
-  },
-  station: {
-    fontSize: 16,
-    fontWeight: "700",
-    color: brandColors.forest,
-  },
-  date: {
-    color: brandColors.forestSoft,
-    marginBottom: 6,
-  },
-  buttonContainer: {
+  entryMain: {
     flexDirection: "row",
-    marginRight: -8,
+    flexShrink: 1,
   },
-  detail: {
-    color: brandColors.forestSoft,
+  stationCircle: {
+    alignItems: "center",
+    backgroundColor: "#EDFAF1",
+    borderRadius: 22,
+    height: 44,
+    justifyContent: "center",
+    width: 44,
   },
-  totalPrice: {
-    marginTop: 6,
+  entryMainText: {
+    marginLeft: 10,
+  },
+  stationName: {
+    color: "#20201D",
+    fontSize: 16,
+    fontWeight: "800",
+    maxWidth: 190,
+  },
+  dateRow: {
+    alignItems: "center",
+    flexDirection: "row",
+    marginTop: 2,
+  },
+  dateText: {
+    color: "#7B7B73",
+    fontSize: 14,
+    marginLeft: 5,
+  },
+  entrySideColumn: {
+    alignItems: "flex-end",
+    justifyContent: "space-between",
+    minHeight: 66,
+  },
+  priceBadge: {
+    backgroundColor: "#DFF4E8",
+    borderRadius: 14,
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+  },
+  priceBadgeText: {
+    color: brandColors.forest,
+    fontSize: 15,
+    fontWeight: "800",
+  },
+  metricsRow: {
+    flexDirection: "row",
+    marginLeft: 54,
+    marginTop: 10,
+  },
+  metricBlock: {
+    marginRight: 20,
+  },
+  metricLabel: {
+    color: "#7B7B73",
+    fontSize: 12,
+    fontWeight: "700",
+    letterSpacing: 0.6,
+  },
+  metricValue: {
+    color: "#222222",
+    fontSize: 17,
+    fontWeight: "700",
+    marginTop: 1,
+  },
+  emptyCard: {
+    backgroundColor: "#FFFFFF",
+    borderColor: "#EBEBE6",
+    borderRadius: 18,
+    borderWidth: 1,
+    marginTop: 10,
+    padding: 18,
+  },
+  emptyTitle: {
+    color: "#222222",
     fontSize: 18,
     fontWeight: "700",
-    color: brandColors.forest,
+  },
+  emptyText: {
+    color: "#6F6F67",
+    fontSize: 15,
+    marginTop: 6,
   },
   fab: {
-    position: "absolute",
-    right: 20,
-    bottom: 20,
     backgroundColor: brandColors.forest,
+    borderRadius: 34,
+    bottom: 24,
+    position: "absolute",
+    right: 24,
   },
 });
