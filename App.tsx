@@ -9,10 +9,8 @@ import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { ActivityIndicator, PaperProvider } from 'react-native-paper';
 import MainTabs from './navigation/MainTabs';
-import AddRefuel from './screens/AddRefuel';
 import FilterScreen from './screens/Filter';
 import LoginScreen from './screens/LoginScreen';
-import RefuelHistory from './screens/RefuelHistory';
 import RegistrationScreen from './screens/RegistrationScreen';
 import WelcomeScreen from './screens/WelcomeScreen';
 import {
@@ -35,8 +33,6 @@ type RootStackParamList = {
   Main: undefined;
   Register: undefined;
   Welcome: undefined;
-  AddRefuel: undefined;
-  RefuelHistory: undefined;
   Filter: undefined;
 };
 
@@ -135,8 +131,6 @@ export default function App() {
                       />
                     )}
                   </Stack.Screen>
-                  <Stack.Screen name="AddRefuel" component={AddRefuel} />
-                  <Stack.Screen name="RefuelHistory" component={RefuelHistory} />
                   <Stack.Screen name="Filter" component={FilterScreen} />
                 </>
               ) : (

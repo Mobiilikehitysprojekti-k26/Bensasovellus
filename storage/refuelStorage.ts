@@ -1,5 +1,27 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
+export type RefuelEconomicsStatus =
+  | 'missing_consumption'
+  | 'missing_location'
+  | 'network_error'
+  | 'ok'
+  | 'station_not_matched';
+
+export interface RefuelEconomics {
+  actualTotalCost?: number;
+  benchmarkStationName?: string;
+  evaluatedAt: string;
+  naiveCheapestPumpTotalCost?: number;
+  origin?: {
+    latitude: number;
+    longitude: number;
+  };
+  selectedStationDistanceMeters?: number;
+  status: RefuelEconomicsStatus;
+  userSavingsEuro?: number;
+  version: 1;
+}
+
 export interface RefuelEntry {
   id: string;
   date: string;
@@ -8,6 +30,7 @@ export interface RefuelEntry {
   liters: number;
   pricePerLiter: number;
   totalPrice: number;
+  economics?: RefuelEconomics;
 }
 
 const KEY = "refuelHistory";

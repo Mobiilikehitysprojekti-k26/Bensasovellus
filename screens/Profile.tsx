@@ -1,7 +1,8 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Alert, Image, ScrollView, StyleSheet, View } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
+import { useFocusEffect } from '@react-navigation/native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import {
   ActivityIndicator,
@@ -20,6 +21,7 @@ import {
   saveProfilePreferences,
   type ProfilePreferences,
 } from '../storage/profileStorage';
+import { getRefuelHistory, type RefuelEntry } from '../storage/refuelStorage';
 import { brandColors } from '../theme';
 
 interface ProfileScreenProps {
@@ -100,6 +102,10 @@ function getFuelTypeLabel(fuelType: FuelType): string {
   }
 }
 
+function formatEuro(value: number): string {
+  return `${value.toFixed(2)}€`;
+}
+
 function MenuRow({ icon, onPress, title }: MenuRowProps) {
   return (
     <Card mode="contained" onPress={onPress} style={styles.menuRowCard}>
@@ -161,6 +167,17 @@ export default function ProfileScreen({
   const [isPreferencesLoading, setIsPreferencesLoading] = useState(true);
   const [isSavingVehicle, setIsSavingVehicle] = useState(false);
   const [isUpdatingImage, setIsUpdatingImage] = useState(false);
+  const [refuelHistory, setRefuelHistory] = useState<RefuelEntry[]>([]);
+
+  const loadRefuelHistory = useCallback(async () => {
+    try {
+      const history = await getRefuelHistory();
+      setRefuelHistory(history);
+    } catch (error) {
+      console.error('Failed to load refuel history', error);
+      setRefuelHistory([]);
+    }
+  }, []);
 
   useEffect(() => {
     let isMounted = true;
@@ -205,10 +222,63 @@ export default function ProfileScreen({
   }, [user?.email]);
 
   useEffect(() => {
+    void loadRefuelHistory();
+  }, [loadRefuelHistory]);
+
+  useFocusEffect(
+    useCallback(() => {
+      void loadRefuelHistory();
+    }, [loadRefuelHistory])
+  );
+
+  useEffect(() => {
     setVehicleNameInput(preferences.vehicleName);
     setCombinedConsumptionInput(preferences.combinedConsumption);
     setFuelTypeInput(preferences.fuelType);
   }, [preferences.combinedConsumption, preferences.fuelType, preferences.vehicleName]);
+
+  const {
+    hasMonthlySavingsData,
+    hasTotalSavingsData,
+    monthlyOverpay,
+    monthlySavings,
+    monthlySavingsEntryCount,
+    totalOverpay,
+    totalSavings,
+    totalSavingsEntryCount,
+  } = useMemo(() => {
+    const now = new Date();
+    const currentMonth = now.getMonth();
+    const currentYear = now.getFullYear();
+
+    const evaluatedEntries = refuelHistory.filter(
+      (entry) =>
+        entry.economics?.status === 'ok' &&
+        typeof entry.economics.userSavingsEuro === 'number' &&
+        Number.isFinite(entry.economics.userSavingsEuro)
+    );
+
+    const monthlyEntries = evaluatedEntries.filter((entry) => {
+      const entryDate = new Date(entry.date);
+      return entryDate.getMonth() === currentMonth && entryDate.getFullYear() === currentYear;
+    });
+
+    const reducePositiveSavings = (sum: number, entry: RefuelEntry) =>
+      sum + Math.max(entry.economics?.userSavingsEuro ?? 0, 0);
+    const reduceNegativeSavings = (sum: number, entry: RefuelEntry) =>
+      sum + Math.max(-(entry.economics?.userSavingsEuro ?? 0), 0);
+
+    return {
+      hasMonthlySavingsData: monthlyEntries.length > 0,
+      hasTotalSavingsData: evaluatedEntries.length > 0,
+      monthlyOverpay: monthlyEntries.reduce(reduceNegativeSavings, 0),
+      monthlySavings: monthlyEntries.reduce(reducePositiveSavings, 0),
+      monthlySavingsEntryCount: monthlyEntries.length,
+      totalOverpay: evaluatedEntries.reduce(reduceNegativeSavings, 0),
+      totalSavings: evaluatedEntries.reduce(reducePositiveSavings, 0),
+      totalSavingsEntryCount: evaluatedEntries.length,
+    };
+  }, [refuelHistory]);
 
   const savePreferences = async (
     nextPreferences: ProfilePreferences,
@@ -663,14 +733,21 @@ export default function ProfileScreen({
               </View>
 
               <Text style={styles.statLabel} variant="labelLarge">
-                SÄÄSTÖ TÄNÄÄN
+                SÄÄSTÖ TÄSSÄ KUUSSA
               </Text>
               <Text style={styles.statValueMint} variant="displaySmall">
-                44€
+                {hasMonthlySavingsData ? formatEuro(monthlySavings) : '—'}
               </Text>
               <Text style={styles.statDescription} variant="bodyMedium">
-                tässä kuussa
+                {hasMonthlySavingsData
+                  ? 'Arvioitu ' + monthlySavingsEntryCount + ' tankkauksesta'
+                  : 'Ei vielä arvioituja tankkauksia'}
               </Text>
+              {hasMonthlySavingsData ? (
+                <Text style={styles.statNegativeDescription} variant="bodyMedium">
+                  Ylikulu {formatEuro(monthlyOverpay)}
+                </Text>
+              ) : null}
             </Card.Content>
           </Card>
 
@@ -684,15 +761,21 @@ export default function ProfileScreen({
                 YHTEENSÄ
               </Text>
               <Text style={styles.statValueLavender} variant="displaySmall">
-                255€
+                {hasTotalSavingsData ? formatEuro(totalSavings) : '—'}
               </Text>
               <Text style={styles.statDescription} variant="bodyMedium">
-                säästetty
+                {hasTotalSavingsData
+                  ? 'Arvioitu ' + totalSavingsEntryCount + ' tankkauksesta'
+                  : 'Ei vielä arvioituja tankkauksia'}
               </Text>
+              {hasTotalSavingsData ? (
+                <Text style={styles.statNegativeDescription} variant="bodyMedium">
+                  Ylikulu {formatEuro(totalOverpay)}
+                </Text>
+              ) : null}
             </Card.Content>
           </Card>
         </View>
-
         <MenuRow icon="account-outline" onPress={() => setActivePage('info')} title="Omat tiedot" />
         <MenuRow
          icon="history"
@@ -864,7 +947,7 @@ const styles = StyleSheet.create({
   statCard: {
     borderRadius: 24,
     flex: 1,
-    minHeight: 168,
+    minHeight: 190,
   },
   statCardMint: {
     backgroundColor: '#EAFBF2',
@@ -907,6 +990,10 @@ const styles = StyleSheet.create({
   statDescription: {
     color: '#B0B0AA',
     marginTop: 6,
+  },
+  statNegativeDescription: {
+    color: '#8A8A84',
+    marginTop: 4,
   },
   menuRowCard: {
     backgroundColor: '#FFFFFF',

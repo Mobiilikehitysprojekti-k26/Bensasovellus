@@ -4,9 +4,12 @@ import { fetchDrivingRouteWithWaypoints, type DrivingRoute } from './routing';
 const FUEL_API_BASE_URL = 'http://204.168.156.110:3000/api/fuel';
 const FUEL_API_KEY = '01102FFA595F2B91';
 const EXACT_ROUTE_CONCURRENCY = 2;
-const MAX_EXACT_CANDIDATES = 3;
-const MAX_CORRIDOR_DISTANCE_METERS = 8000;
+const MAX_EXACT_CANDIDATES = 8;
+const MAX_CORRIDOR_DISTANCE_METERS = 2500;
 const ROAD_DISTANCE_ESTIMATE_FACTOR = 1.18;
+const MIN_ALLOWED_DETOUR_METERS = 1200;
+const MAX_ALLOWED_DETOUR_METERS = 3500;
+const ALLOWED_DETOUR_SHARE = 0.12;
 
 export type FuelType = '95' | '98' | 'diesel';
 
@@ -362,9 +365,22 @@ export async function findBestFuelStop(params: {
     }
 
     return left.price - right.price;
-  })[0];
+  });
 
-  return bestStation ?? null;
+  if (bestStation.length === 0) {
+    return null;
+  }
+
+  const allowedDetourMeters = Math.max(
+    MIN_ALLOWED_DETOUR_METERS,
+    Math.min(MAX_ALLOWED_DETOUR_METERS, params.baseRoute.distanceMeters * ALLOWED_DETOUR_SHARE)
+  );
+  const reasonableDetourStations = bestStation.filter(
+    (station) => station.detourDistanceMeters <= allowedDetourMeters
+  );
+  const prioritizedStations = reasonableDetourStations.length > 0 ? reasonableDetourStations : bestStation;
+
+  return prioritizedStations[0] ?? null;
 }
 
 export function getFuelStopDisplayName(

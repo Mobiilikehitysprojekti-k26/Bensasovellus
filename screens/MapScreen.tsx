@@ -1,7 +1,7 @@
 import { StatusBar } from 'expo-status-bar';
 import * as Location from 'expo-location';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, StyleSheet, View } from 'react-native';
+import { ActivityIndicator, Alert, Platform, StyleSheet, View } from 'react-native';
 import type { LatLng } from 'react-native-maps';
 import MapView from 'react-native-maps';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -44,6 +44,8 @@ const offRouteThresholdM = 110;
 const navigationZoom = 20.4;
 const navigationPitch = 26;
 const navigationLookAheadMeters = 70;
+const navigationStartLatitudeDelta = 0.0035;
+const navigationStartLongitudeDelta = 0.0035;
 const defaultMapZoom = 15;
 const stationarySpeedMps = 0.8;
 const minJitterThresholdM = 4;
@@ -926,6 +928,25 @@ export default function MapScreen({ user }: MapScreenProps) {
     if (nextValue && currentLocationRef.current && mapRef.current) {
       navigationCameraLockedRef.current = true;
       focusNavigationCamera(currentLocationRef.current, heading);
+
+      if (Platform.OS === 'ios') {
+        const resolvedHeading = resolveCameraHeading(heading, headingRef.current);
+        const regionCenter = offsetCoordinateByMeters(
+          currentLocationRef.current,
+          resolvedHeading,
+          navigationLookAheadMeters
+        );
+
+        mapRef.current.animateToRegion(
+          {
+            latitude: regionCenter.latitude,
+            longitude: regionCenter.longitude,
+            latitudeDelta: navigationStartLatitudeDelta,
+            longitudeDelta: navigationStartLongitudeDelta,
+          },
+          450
+        );
+      }
       return;
     }
 
