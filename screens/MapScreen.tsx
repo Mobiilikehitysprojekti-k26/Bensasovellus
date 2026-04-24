@@ -285,7 +285,7 @@ function buildNavigationInstruction(
   return {
     distanceLabel:
       currentStep.type === 10
-        ? 'Perilla'
+        ? 'Perillä'
         : formatNavigationDistanceLabel(
           measureRouteDistanceBetweenIndices(route, nearestRouteIndex, currentStep.wayPointEndIndex)
         ),
@@ -340,6 +340,10 @@ function formatDurationLabel(durationSeconds: number | null): string {
   return `${Math.round(durationSeconds / 60)} min`;
 }
 
+function formatSavingsLabel(value: number): string {
+  return `${value.toFixed(2)} EUR`;
+}
+
 function getCombinedConsumptionValue(preferences: ProfilePreferences): number | null {
   const normalizedValue = preferences.combinedConsumption.trim().replace(',', '.');
   const parsedValue = Number(normalizedValue);
@@ -377,9 +381,11 @@ function createFuelStopSummary(
     return null;
   }
 
-  return `${recommendedFuelStop.stationName} • ${formatFuelPrice(
+  return `${recommendedFuelStop.stationName} | ${formatFuelPrice(
     recommendedFuelStop.price
-  )} • ${formatExtraDistance(recommendedFuelStop.detourDistanceMeters)} • sitten ${destinationLabel}`;
+  )} | ${formatExtraDistance(
+    recommendedFuelStop.detourDistanceMeters
+  )} | Arvioitu säästö ${formatSavingsLabel(recommendedFuelStop.estimatedNetSavingsEuro)} | sitten ${destinationLabel}`;
 }
 
 export default function MapScreen({ user }: MapScreenProps) {
@@ -407,7 +413,7 @@ export default function MapScreen({ user }: MapScreenProps) {
   const [address, setAddress] = useState('');
   const [currentLocation, setCurrentLocation] = useState<LatLng | null>(null);
   const [destination, setDestination] = useState<LatLng | null>(null);
-  const [destinationLabel, setDestinationLabel] = useState('Maaranpaa');
+  const [destinationLabel, setDestinationLabel] = useState('Määränpää');
   const [routeCoords, setRouteCoords] = useState<LatLng[]>([]);
   const [routeSteps, setRouteSteps] = useState<DrivingRouteStep[]>([]);
   const [distanceMeters, setDistanceMeters] = useState<number | null>(null);
@@ -651,7 +657,7 @@ export default function MapScreen({ user }: MapScreenProps) {
 
     Alert.alert(
       'Tankkausasema saavutettu',
-      `Saavuit asemalle ${activeFuelStop.stationName}. Reitti jatkuu maaranpaahan.`
+      `Saavuit asemalle ${activeFuelStop.stationName}. Reitti jatkuu määränpäähän.`
     );
 
     try {
@@ -727,7 +733,7 @@ export default function MapScreen({ user }: MapScreenProps) {
         const permission = await Location.requestForegroundPermissionsAsync();
 
         if (permission.status !== 'granted') {
-          setLocationError('Sijaintilupaa ei myonnetty.');
+          setLocationError('Sijaintilupaa ei myönnetty.');
           setIsLocating(false);
           return;
         }
@@ -798,7 +804,7 @@ export default function MapScreen({ user }: MapScreenProps) {
                 setIsNavigating(false);
                 setIsFollowing(true);
                 navigationCameraLockedRef.current = false;
-                Alert.alert('Perilla', 'Saavuit maaranpaahan.');
+                Alert.alert('Perillä', 'Saavuit määränpäähän.');
               }
             }
           }
@@ -815,7 +821,7 @@ export default function MapScreen({ user }: MapScreenProps) {
         });
       } catch (error) {
         console.error('Location setup failed', error);
-        setLocationError('Sijainnin haku epaonnistui.');
+        setLocationError('Sijainnin haku epäonnistui.');
         setIsLocating(false);
       }
     };
@@ -854,7 +860,7 @@ export default function MapScreen({ user }: MapScreenProps) {
     }
 
     if (!currentLocationRef.current) {
-      Alert.alert('Sijainti puuttuu', 'Odota hetki, kayttajan sijaintia haetaan.');
+      Alert.alert('Sijainti puuttuu', 'Odota hetki, käyttäjän sijaintia haetaan.');
       return;
     }
 
@@ -869,7 +875,7 @@ export default function MapScreen({ user }: MapScreenProps) {
       setDestinationLabel(address.trim());
       await planRouteWithOptionalFuelStop(currentLocationRef.current, destinationCoords, true);
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Reitin haku epaonnistui.';
+      const message = error instanceof Error ? error.message : 'Reitin haku epäonnistui.';
       setLocationError(message);
       Alert.alert('Virhe', message);
       setRouteCoords([]);
@@ -900,7 +906,7 @@ export default function MapScreen({ user }: MapScreenProps) {
     try {
       await planRouteWithOptionalFuelStop(currentLocationRef.current, coordinate, true);
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Reitin haku epaonnistui.';
+      const message = error instanceof Error ? error.message : 'Reitin haku epäonnistui.';
       setLocationError(message);
       Alert.alert('Virhe', message);
       setRouteCoords([]);
@@ -1001,7 +1007,7 @@ export default function MapScreen({ user }: MapScreenProps) {
   const routeBannerTitle =
     recommendedFuelStop && !hasVisitedFuelStop ? recommendedFuelStop.stationName : destinationLabel;
   const routeBannerSubtitle =
-    fuelStopSummary ?? `${distanceLabel} · ${durationLabel}`;
+    fuelStopSummary ?? `${distanceLabel} | ${durationLabel}`;
 
   return (
     <SafeAreaView edges={['top', 'left', 'right']} style={styles.container}>

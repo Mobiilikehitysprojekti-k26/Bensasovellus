@@ -240,10 +240,8 @@ export default function ProfileScreen({
   const {
     hasMonthlySavingsData,
     hasTotalSavingsData,
-    monthlyOverpay,
     monthlySavings,
     monthlySavingsEntryCount,
-    totalOverpay,
     totalSavings,
     totalSavingsEntryCount,
   } = useMemo(() => {
@@ -265,16 +263,12 @@ export default function ProfileScreen({
 
     const reducePositiveSavings = (sum: number, entry: RefuelEntry) =>
       sum + Math.max(entry.economics?.userSavingsEuro ?? 0, 0);
-    const reduceNegativeSavings = (sum: number, entry: RefuelEntry) =>
-      sum + Math.max(-(entry.economics?.userSavingsEuro ?? 0), 0);
 
     return {
       hasMonthlySavingsData: monthlyEntries.length > 0,
       hasTotalSavingsData: evaluatedEntries.length > 0,
-      monthlyOverpay: monthlyEntries.reduce(reduceNegativeSavings, 0),
       monthlySavings: monthlyEntries.reduce(reducePositiveSavings, 0),
       monthlySavingsEntryCount: monthlyEntries.length,
-      totalOverpay: evaluatedEntries.reduce(reduceNegativeSavings, 0),
       totalSavings: evaluatedEntries.reduce(reducePositiveSavings, 0),
       totalSavingsEntryCount: evaluatedEntries.length,
     };
@@ -743,11 +737,6 @@ export default function ProfileScreen({
                   ? 'Arvioitu ' + monthlySavingsEntryCount + ' tankkauksesta'
                   : 'Ei vielä arvioituja tankkauksia'}
               </Text>
-              {hasMonthlySavingsData ? (
-                <Text style={styles.statNegativeDescription} variant="bodyMedium">
-                  Ylikulu {formatEuro(monthlyOverpay)}
-                </Text>
-              ) : null}
             </Card.Content>
           </Card>
 
@@ -768,11 +757,6 @@ export default function ProfileScreen({
                   ? 'Arvioitu ' + totalSavingsEntryCount + ' tankkauksesta'
                   : 'Ei vielä arvioituja tankkauksia'}
               </Text>
-              {hasTotalSavingsData ? (
-                <Text style={styles.statNegativeDescription} variant="bodyMedium">
-                  Ylikulu {formatEuro(totalOverpay)}
-                </Text>
-              ) : null}
             </Card.Content>
           </Card>
         </View>

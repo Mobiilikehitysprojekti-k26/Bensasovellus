@@ -1,15 +1,22 @@
 import type { LatLng } from 'react-native-maps';
-import { fetchDrivingRouteWithWaypoints, type DrivingRoute } from './routing';
+import {
+  fetchDrivingRouteWithWaypoints,
+  RouteRequestError,
+  type DrivingRoute,
+} from './routing';
 
 const FUEL_API_BASE_URL = 'http://204.168.156.110:3000/api/fuel';
 const FUEL_API_KEY = '01102FFA595F2B91';
 const EXACT_ROUTE_CONCURRENCY = 2;
 const MAX_EXACT_CANDIDATES = 8;
 const MAX_CORRIDOR_DISTANCE_METERS = 2500;
+const BASELINE_CORRIDOR_DISTANCE_METERS = 900;
 const ROAD_DISTANCE_ESTIMATE_FACTOR = 1.18;
 const MIN_ALLOWED_DETOUR_METERS = 1200;
 const MAX_ALLOWED_DETOUR_METERS = 3500;
 const ALLOWED_DETOUR_SHARE = 0.12;
+const ASSUMED_REFUEL_LITERS = 40;
+const MIN_NET_SAVINGS_EURO = 0.2;
 
 export type FuelType = '95' | '98' | 'diesel';
 
@@ -39,6 +46,7 @@ type StationCandidate = {
 export interface RecommendedFuelStop {
   coordinate: LatLng;
   detourDistanceMeters: number;
+  estimatedNetSavingsEuro: number;
   estimatedTripFuelCost: number;
   fuelType: FuelType;
   price: number;
@@ -195,7 +203,7 @@ async function fetchFuelStations(fuelType: FuelType): Promise<FuelApiStation[]> 
   });
 
   if (!response.ok) {
-    throw new Error('Polttoainehintojen haku epaonnistui.');
+    throw new Error('Polttoainehintojen haku epäonnistui.');
   }
 
   const data = (await response.json()) as FuelApiStation[];
@@ -255,6 +263,8 @@ export async function findBestFuelStop(params: {
   destination: LatLng;
   fuelType: FuelType;
 }): Promise<RecommendedFuelStop | null> {
+  type EvaluatedFuelStop = RecommendedFuelStop & { corridorDistanceMeters: number };
+
   const stations = await fetchFuelStations(params.fuelType);
   const stationCandidates = resolveStationCandidates(stations, params.baseRoute.geometry);
 
@@ -308,8 +318,38 @@ export async function findBestFuelStop(params: {
   const nearbyCandidates = approximatedCandidates.filter(
     (station) => station.corridorDistanceMeters <= MAX_CORRIDOR_DISTANCE_METERS
   );
-  const exactCandidates = (nearbyCandidates.length > 0 ? nearbyCandidates : approximatedCandidates)
-    .slice(0, MAX_EXACT_CANDIDATES);
+  const candidatePool = nearbyCandidates.length > 0 ? nearbyCandidates : approximatedCandidates;
+  const selectionBucketSize = Math.max(4, Math.floor(MAX_EXACT_CANDIDATES / 2));
+  const exactCandidates = Array.from(
+    new Set([
+      ...candidatePool.slice(0, selectionBucketSize),
+      ...[...candidatePool]
+        .sort((left, right) => {
+          if (left.price !== right.price) {
+            return left.price - right.price;
+          }
+
+          if (left.approximateDetourMeters !== right.approximateDetourMeters) {
+            return left.approximateDetourMeters - right.approximateDetourMeters;
+          }
+
+          return left.corridorDistanceMeters - right.corridorDistanceMeters;
+        })
+        .slice(0, selectionBucketSize),
+      ...[...candidatePool]
+        .sort((left, right) => {
+          if (left.corridorDistanceMeters !== right.corridorDistanceMeters) {
+            return left.corridorDistanceMeters - right.corridorDistanceMeters;
+          }
+
+          return left.price - right.price;
+        })
+        .slice(0, selectionBucketSize),
+    ])
+  ).slice(0, MAX_EXACT_CANDIDATES);
+  let failedRouteEvaluations = 0;
+  const failedStationSamples: string[] = [];
+  let unexpectedEvaluationError: unknown = null;
 
   const evaluatedCandidates = await mapWithConcurrency(
     exactCandidates,
@@ -325,6 +365,8 @@ export async function findBestFuelStop(params: {
         return {
           coordinate: station.coordinate,
           detourDistanceMeters: Math.max(0, route.distanceMeters - params.baseRoute.distanceMeters),
+          corridorDistanceMeters: station.corridorDistanceMeters,
+          estimatedNetSavingsEuro: 0,
           estimatedTripFuelCost: calculateTripFuelCost(
             route.distanceMeters,
             params.combinedConsumption,
@@ -339,15 +381,35 @@ export async function findBestFuelStop(params: {
           totalRouteDistanceMeters: route.distanceMeters,
           totalRouteDurationSeconds: route.durationSeconds,
           updatedText: station.updatedText,
-        } satisfies RecommendedFuelStop;
+        } satisfies EvaluatedFuelStop;
       } catch (error) {
-        console.error(`Failed to evaluate fuel station ${station.stationName}`, error);
+        failedRouteEvaluations += 1;
+        if (failedStationSamples.length < 3) {
+          failedStationSamples.push(station.stationName);
+        }
+
+        if (!(error instanceof RouteRequestError) && !unexpectedEvaluationError) {
+          unexpectedEvaluationError = error;
+        }
+
         return null;
       }
     }
   );
 
-  const validCandidates: RecommendedFuelStop[] = [];
+  if (failedRouteEvaluations > 0) {
+    const sampleLabel =
+      failedStationSamples.length > 0 ? ` Esim: ${failedStationSamples.join(', ')}.` : '';
+    console.warn(
+      `Polttoaineasemien reittiarviointi epäonnistui ${failedRouteEvaluations} asemalle.${sampleLabel}`
+    );
+  }
+
+  if (unexpectedEvaluationError) {
+    console.warn('Polttoaineasemien reittiarvioinnissa tuli odottamaton virhe.', unexpectedEvaluationError);
+  }
+
+  const validCandidates: EvaluatedFuelStop[] = [];
 
   for (const station of evaluatedCandidates) {
     if (station) {
@@ -355,19 +417,7 @@ export async function findBestFuelStop(params: {
     }
   }
 
-  const bestStation = validCandidates.sort((left, right) => {
-    if (left.estimatedTripFuelCost !== right.estimatedTripFuelCost) {
-      return left.estimatedTripFuelCost - right.estimatedTripFuelCost;
-    }
-
-    if (left.detourDistanceMeters !== right.detourDistanceMeters) {
-      return left.detourDistanceMeters - right.detourDistanceMeters;
-    }
-
-    return left.price - right.price;
-  });
-
-  if (bestStation.length === 0) {
+  if (validCandidates.length === 0) {
     return null;
   }
 
@@ -375,10 +425,64 @@ export async function findBestFuelStop(params: {
     MIN_ALLOWED_DETOUR_METERS,
     Math.min(MAX_ALLOWED_DETOUR_METERS, params.baseRoute.distanceMeters * ALLOWED_DETOUR_SHARE)
   );
-  const reasonableDetourStations = bestStation.filter(
+  const reasonableDetourStations = validCandidates.filter(
     (station) => station.detourDistanceMeters <= allowedDetourMeters
   );
-  const prioritizedStations = reasonableDetourStations.length > 0 ? reasonableDetourStations : bestStation;
+  const detourFilteredCandidates =
+    reasonableDetourStations.length > 0 ? reasonableDetourStations : validCandidates;
+
+  const directRouteReferenceStations = stationCandidates.filter(
+    (station) => station.corridorDistanceMeters <= BASELINE_CORRIDOR_DISTANCE_METERS
+  );
+  const baselineStations =
+    directRouteReferenceStations.length > 0
+      ? directRouteReferenceStations
+      : [...stationCandidates]
+          .sort((left, right) => left.corridorDistanceMeters - right.corridorDistanceMeters)
+          .slice(0, Math.min(12, stationCandidates.length));
+  const baselinePricePerLiter = baselineStations.reduce(
+    (lowestPrice, station) => Math.min(lowestPrice, station.price),
+    Number.POSITIVE_INFINITY
+  );
+
+  if (!Number.isFinite(baselinePricePerLiter)) {
+    return null;
+  }
+
+  const prioritizedStations = detourFilteredCandidates
+    .map((station) => {
+      const expectedPumpSavingsEuro = Math.max(
+        0,
+        (baselinePricePerLiter - station.price) * ASSUMED_REFUEL_LITERS
+      );
+      const detourFuelCostEuro = calculateTripFuelCost(
+        station.detourDistanceMeters,
+        params.combinedConsumption,
+        station.price
+      );
+      const estimatedNetSavingsEuro = expectedPumpSavingsEuro - detourFuelCostEuro;
+
+      return {
+        ...station,
+        estimatedNetSavingsEuro,
+      } satisfies EvaluatedFuelStop;
+    })
+    .filter((station) => station.estimatedNetSavingsEuro >= MIN_NET_SAVINGS_EURO)
+    .sort((left, right) => {
+      if (left.estimatedNetSavingsEuro !== right.estimatedNetSavingsEuro) {
+        return right.estimatedNetSavingsEuro - left.estimatedNetSavingsEuro;
+      }
+
+      if (left.price !== right.price) {
+        return left.price - right.price;
+      }
+
+      if (left.detourDistanceMeters !== right.detourDistanceMeters) {
+        return left.detourDistanceMeters - right.detourDistanceMeters;
+      }
+
+      return left.estimatedTripFuelCost - right.estimatedTripFuelCost;
+    });
 
   return prioritizedStations[0] ?? null;
 }
