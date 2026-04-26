@@ -11,7 +11,10 @@ import type { LatLng } from 'react-native-maps';
 type FuelPrice = {
   station_name: string
   fuel_type: string
+  matched_station_name?: string | null
   price: number
+  reported_at?: string | null
+  scraped_at?: string | null
   updated_text: string
   lat?: number | null
   lon?: number | null
@@ -56,18 +59,101 @@ function formatDistance(distanceMeters: number): string {
 }
 
 function getFuelSortOrder(fuelType: string | null | undefined): number {
-  if (!fuelType) return 999;
-  const fuelLower = fuelType.toLowerCase();
+  const fuelLower = normalizeFuelType(fuelType);
   if (fuelLower === '95') return 0;
   if (fuelLower === '98') return 1;
   if (fuelLower === 'diesel') return 2;
   return 999; // unknown fuels at the end
 }
 
+function normalizeFuelType(fuelType: string | null | undefined): string {
+  return fuelType?.trim().toLowerCase() ?? '';
+}
+
+function formatFuelType(fuelType: string | null | undefined): string {
+  const normalizedFuelType = normalizeFuelType(fuelType);
+
+  if (normalizedFuelType === 'diesel') {
+    return 'Diesel';
+  }
+
+  return fuelType?.trim() || 'N/A';
+}
+
+function normalizeText(value: string | null | undefined): string {
+  return (value ?? '')
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase();
+}
+
+function isUserRefuelText(value: string | null | undefined): boolean {
+  return normalizeText(value).includes('kayttajan tankkaus');
+}
+
+function getStationDisplayName(fuel: FuelPrice): string {
+  const stationName = fuel.station_name?.trim();
+  const matchedStationName = fuel.matched_station_name?.trim();
+
+  if (stationName && !isUserRefuelText(stationName)) {
+    return stationName;
+  }
+
+  return matchedStationName || stationName || 'Nimeton asema';
+}
+
+function getFuelTimestamp(fuel: FuelPrice): number {
+  const timestampCandidates = [fuel.reported_at, fuel.scraped_at, fuel.updated_text];
+
+  for (const value of timestampCandidates) {
+    if (!value || isUserRefuelText(value)) {
+      continue;
+    }
+
+    const timestamp = new Date(value).getTime();
+    if (Number.isFinite(timestamp)) {
+      return timestamp;
+    }
+  }
+
+  return 0;
+}
+
+function formatStoredTimestamp(value: string): string {
+  return new Date(value).toLocaleString('fi-FI', {
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+  });
+}
+
+function getUpdatedText(fuel: FuelPrice | undefined): string {
+  if (!fuel) {
+    return 'N/A';
+  }
+
+  if (fuel.updated_text && !isUserRefuelText(fuel.updated_text)) {
+    return fuel.updated_text;
+  }
+
+  const timestampSource = fuel.reported_at ?? fuel.scraped_at;
+  if (timestampSource) {
+    const timestamp = new Date(timestampSource).getTime();
+    if (Number.isFinite(timestamp)) {
+      return formatStoredTimestamp(timestampSource);
+    }
+  }
+
+  return 'N/A';
+}
+
 export default function PricesScreen() {
   const [data, setData] = useState<StationGroup[]>([]);
   const [filteredData, setFilteredData] = useState<StationGroup[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [filters, setFilters] = useState<Filters>({ fuelTypes: [], sortBy: 'latest' });
   const [currentLocation, setCurrentLocation] = useState<LatLng | null>(null);
   const [locationError, setLocationError] = useState<string | null>(null);
@@ -76,6 +162,54 @@ export default function PricesScreen() {
 
   const API_KEY = process.env.EXPO_PUBLIC_DATABASE_API_KEY
   const API_URL = 'http://204.168.156.110:3000/api/all'
+
+  const loadPrices = useCallback(async (showInitialLoader: boolean = false) => {
+    if (showInitialLoader) {
+      setLoading(true);
+    }
+
+    try {
+      const response = await fetch(API_URL, {
+        headers: {
+          'x-api-key': API_KEY,
+        },
+      });
+      const json = (await response.json()) as FuelPrice[];
+      const grouped: { [key: string]: FuelPrice[] } = {};
+
+      json.forEach(item => {
+        const stationName = getStationDisplayName(item);
+
+        if (stationName) {
+          if (!grouped[stationName]) grouped[stationName] = [];
+          grouped[stationName].push(item);
+        }
+      });
+
+      const result: StationGroup[] = Object.keys(grouped).map(station => ({
+        station_name: station,
+        fuels: grouped[station],
+      }));
+
+      setData(result);
+    } catch (error) {
+      console.error(error);
+    } finally {
+      if (showInitialLoader) {
+        setLoading(false);
+      }
+    }
+  }, [API_KEY, API_URL]);
+
+  const handleRefresh = useCallback(async () => {
+    setRefreshing(true);
+
+    try {
+      await loadPrices(false);
+    } finally {
+      setRefreshing(false);
+    }
+  }, [loadPrices]);
 
   // Get current location
   useEffect(() => {
@@ -102,31 +236,8 @@ export default function PricesScreen() {
   }, []);
 
   useEffect(() => {
-    fetch(API_URL, {
-      headers: {
-        'x-api-key': API_KEY,
-      },
-    })
-      .then(res => res.json())
-      .then((json: FuelPrice[]) => {
-        const grouped: { [key: string]: FuelPrice[] } = {};
-        json.forEach(item => {
-          if (item.station_name) {
-            if (!grouped[item.station_name]) grouped[item.station_name] = [];
-            grouped[item.station_name].push(item);
-          }
-        });
-
-        const result: StationGroup[] = Object.keys(grouped).map(station => ({
-          station_name: station,
-          fuels: grouped[station],
-        }));
-
-        setData(result);
-      })
-      .catch(err => console.error(err))
-      .finally(() => setLoading(false));
-  }, []);
+    void loadPrices(true);
+  }, [loadPrices]);
 
   useEffect(() => {
     const loadFilters = async () => {
@@ -155,7 +266,8 @@ export default function PricesScreen() {
         }
       };
       loadFilters();
-    }, [])
+      void loadPrices(false);
+    }, [loadPrices])
   );
 
   useEffect(() => {
@@ -163,17 +275,19 @@ export default function PricesScreen() {
 
     // Filter by fuel types - show station only if it has at least one selected fuel type
     if (filters.fuelTypes.length > 0) {
+      const selectedFuelTypes = new Set(filters.fuelTypes.map(normalizeFuelType));
+
       filtered = filtered.map(station => ({
         ...station,
-        fuels: station.fuels.filter(fuel => fuel.fuel_type && filters.fuelTypes.includes(fuel.fuel_type))
+        fuels: station.fuels.filter(fuel => selectedFuelTypes.has(normalizeFuelType(fuel.fuel_type)))
       })).filter(station => station.fuels && station.fuels.length > 0);
     }
 
     // Sort stations
     if (filters.sortBy === 'latest') {
       filtered = filtered.sort((a, b) => {
-        const latestA = a.fuels && a.fuels.length > 0 ? Math.max(...a.fuels.map(f => f.updated_text ? new Date(f.updated_text).getTime() : 0)) : 0;
-        const latestB = b.fuels && b.fuels.length > 0 ? Math.max(...b.fuels.map(f => f.updated_text ? new Date(f.updated_text).getTime() : 0)) : 0;
+        const latestA = a.fuels && a.fuels.length > 0 ? Math.max(...a.fuels.map(getFuelTimestamp)) : 0;
+        const latestB = b.fuels && b.fuels.length > 0 ? Math.max(...b.fuels.map(getFuelTimestamp)) : 0;
         return latestB - latestA;
       });
     } else if (filters.sortBy === 'cheapest') {
@@ -246,7 +360,7 @@ export default function PricesScreen() {
             <View style={styles.bonusCard}>
               <Text style={styles.bonusStation}>ABC</Text>
               <Text style={styles.bonusPrice}>S-etukortilla tankkausbonus jopa 5 snt/l</Text>
-              <Text style={styles.bonusDescription}>S-etukortilla S-ryhmän bonustaulukon mukaan (0,5 % – 5 %).</Text>
+              <Text style={styles.bonusDescription}>S-etukortilla S-ryhmän bonustaulukon mukaan (0,5 % - 5 %).</Text>
             </View>
 
             <View style={styles.bonusCard}>
@@ -270,6 +384,8 @@ export default function PricesScreen() {
         <FlatList
           data={filteredData}
           keyExtractor={item => item.station_name}
+          onRefresh={handleRefresh}
+          refreshing={refreshing}
           renderItem={({ item }) => {
             const distance = currentLocation && item.fuels?.[0]?.lat && item.fuels?.[0]?.lon
               ? haversineMeters(currentLocation, {
@@ -290,13 +406,13 @@ export default function PricesScreen() {
 
                   {item.fuels && item.fuels.map(fuel => (
                     <View key={fuel.fuel_type} style={styles.fuelRow}>
-                      <Text style={styles.fuelType}>{fuel.fuel_type}</Text>
+                      <Text style={styles.fuelType}>{formatFuelType(fuel.fuel_type)}</Text>
                       <Text style={styles.price}>{fuel.price ? Number(fuel.price).toFixed(3) : 'N/A'} €</Text>
                     </View>
                   ))}
 
                   <Text style={styles.updated}>
-                    Päivitetty: {item.fuels && item.fuels[0] ? item.fuels[0].updated_text : 'N/A'}
+                    Päivitetty: {getUpdatedText(item.fuels?.[0])}
                   </Text>
                 </Card.Content>
               </Card>

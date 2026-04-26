@@ -1,7 +1,8 @@
 import { StatusBar } from 'expo-status-bar';
 import * as Location from 'expo-location';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, Platform, StyleSheet, View } from 'react-native';
+import { useFocusEffect } from '@react-navigation/native';
 import type { LatLng } from 'react-native-maps';
 import MapView from 'react-native-maps';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -59,10 +60,13 @@ type NavigationInstruction = {
 };
 
 type GasStation = {
+  fuel_type?: string | null;
   station_id?: string;
   station_name?: string;
   lat: number;
   lon: number;
+  price?: number | null;
+  updated_text?: string | null;
 };
 
 function toRadians(value: number): number {
@@ -344,6 +348,18 @@ function formatSavingsLabel(value: number): string {
   return `${value.toFixed(2)} EUR`;
 }
 
+function formatFuelStopEconomicsLabel(value: number): string {
+  if (value > 0) {
+    return `Arvioitu säästö ${formatSavingsLabel(value)}`;
+  }
+
+  if (value < 0) {
+    return `Arvioitu lisäkulu ${formatSavingsLabel(Math.abs(value))}`;
+  }
+
+  return 'Ei arvioitua säästöä';
+}
+
 function getCombinedConsumptionValue(preferences: ProfilePreferences): number | null {
   const normalizedValue = preferences.combinedConsumption.trim().replace(',', '.');
   const parsedValue = Number(normalizedValue);
@@ -385,7 +401,38 @@ function createFuelStopSummary(
     recommendedFuelStop.price
   )} | ${formatExtraDistance(
     recommendedFuelStop.detourDistanceMeters
-  )} | Arvioitu säästö ${formatSavingsLabel(recommendedFuelStop.estimatedNetSavingsEuro)} | sitten ${destinationLabel}`;
+  )} | ${formatFuelStopEconomicsLabel(
+    recommendedFuelStop.estimatedNetSavingsEuro
+  )} | sitten ${destinationLabel}`;
+}
+
+async function loadProfilePreferencesForUser(
+  user: RegisteredUser | null
+): Promise<ProfilePreferences> {
+  if (!user?.email) {
+    return createDefaultProfilePreferences();
+  }
+
+  return (await getProfilePreferences(user.email)) ?? createDefaultProfilePreferences();
+}
+
+function getVehicleSettingsMessage(preferences: ProfilePreferences): string | null {
+  const missingFuelType = !preferences.fuelType;
+  const missingConsumption = getCombinedConsumptionValue(preferences) === null;
+
+  if (missingFuelType && missingConsumption) {
+    return 'Aseta profiilissa polttoaine ja yhdistetty kulutus, jotta sovellus voi suositella tankkausasemaa reitille.';
+  }
+
+  if (missingConsumption) {
+    return 'Aseta profiilissa yhdistetty kulutus, jotta sovellus voi suositella tankkausasemaa reitille.';
+  }
+
+  if (missingFuelType) {
+    return 'Valitse profiilissa polttoaine, jotta sovellus voi suositella tankkausasemaa reitille.';
+  }
+
+  return null;
 }
 
 export default function MapScreen({ user }: MapScreenProps) {
@@ -474,28 +521,23 @@ export default function MapScreen({ user }: MapScreenProps) {
     hasVisitedFuelStopRef.current = hasVisitedFuelStop;
   }, [hasVisitedFuelStop]);
 
+  const refreshProfilePreferences = useCallback(async () => {
+    const nextPreferences = await loadProfilePreferencesForUser(user);
+    setProfilePreferences(nextPreferences);
+    return nextPreferences;
+  }, [user]);
+
   useEffect(() => {
     let isMounted = true;
 
     const loadProfilePreferences = async () => {
-      if (!user?.email) {
-        if (isMounted) {
-          setProfilePreferences(createDefaultProfilePreferences());
-        }
-        return;
-      }
-
       try {
-        const storedPreferences = await getProfilePreferences(user.email);
-
-        if (!isMounted) {
-          return;
+        const nextPreferences = await loadProfilePreferencesForUser(user);
+        if (isMounted) {
+          setProfilePreferences(nextPreferences);
         }
-
-        setProfilePreferences(storedPreferences ?? createDefaultProfilePreferences());
       } catch (error) {
         console.error('Failed to load stored profile preferences', error);
-
         if (isMounted) {
           setProfilePreferences(createDefaultProfilePreferences());
         }
@@ -507,7 +549,33 @@ export default function MapScreen({ user }: MapScreenProps) {
     return () => {
       isMounted = false;
     };
-  }, [user?.email]);
+  }, [user]);
+
+  useFocusEffect(
+    useCallback(() => {
+      let isActive = true;
+
+      const loadProfilePreferences = async () => {
+        try {
+          const nextPreferences = await loadProfilePreferencesForUser(user);
+          if (isActive) {
+            setProfilePreferences(nextPreferences);
+          }
+        } catch (error) {
+          console.error('Failed to refresh profile preferences', error);
+          if (isActive) {
+            setProfilePreferences(createDefaultProfilePreferences());
+          }
+        }
+      };
+
+      void loadProfilePreferences();
+
+      return () => {
+        isActive = false;
+      };
+    }, [user])
+  );
 
   useEffect(() => {
     if (!isNavigating || !isFollowing || !currentLocationRef.current) {
@@ -694,9 +762,24 @@ export default function MapScreen({ user }: MapScreenProps) {
 
     applyRoute(directRoute, fitOnMap);
 
-    const combinedConsumption = getCombinedConsumptionValue(profilePreferences);
+    let latestProfilePreferences = profilePreferences;
 
-    if (!profilePreferences.fuelType || combinedConsumption === null) {
+    try {
+      latestProfilePreferences = await refreshProfilePreferences();
+    } catch (error) {
+      console.error('Failed to refresh profile preferences before route planning', error);
+    }
+
+    const vehicleSettingsMessage = getVehicleSettingsMessage(latestProfilePreferences);
+
+    if (vehicleSettingsMessage) {
+      Alert.alert('Aseta kulutus', vehicleSettingsMessage);
+      return;
+    }
+
+    const combinedConsumption = getCombinedConsumptionValue(latestProfilePreferences);
+
+    if (combinedConsumption === null || !latestProfilePreferences.fuelType) {
       return;
     }
 
@@ -708,7 +791,7 @@ export default function MapScreen({ user }: MapScreenProps) {
         combinedConsumption,
         currentLocation: from,
         destination: to,
-        fuelType: profilePreferences.fuelType,
+        fuelType: latestProfilePreferences.fuelType,
       });
 
       if (requestId !== routeRequestIdRef.current || !bestFuelStop) {
@@ -921,13 +1004,85 @@ export default function MapScreen({ user }: MapScreenProps) {
     }
   };
 
-  const handleToggleNavigation = () => {
+  const handleSelectGasStation = async (coordinate: LatLng, stationName: string) => {
+    if (!currentLocationRef.current || isLoadingRoute) {
+      return;
+    }
+
+    setIsLoadingRoute(true);
+    setIsNavigating(false);
+    setIsFollowing(true);
+    setLocationError(null);
+    setDestination(coordinate);
+    setDestinationLabel(stationName);
+    setRecommendedFuelStop(null);
+    recommendedFuelStopRef.current = null;
+    setHasVisitedFuelStop(false);
+    hasVisitedFuelStopRef.current = false;
+
+    try {
+      const route = await fetchDrivingRoute(currentLocationRef.current, coordinate);
+      applyRoute(route, true);
+      setIsNavigating(true);
+      isNavigatingRef.current = true;
+      setIsFollowing(true);
+      navigationCameraLockedRef.current = true;
+      focusNavigationCamera(currentLocationRef.current, heading);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Reitin haku epäonnistui.';
+      setLocationError(message);
+      Alert.alert('Virhe', message);
+      setRouteCoords([]);
+      setRouteSteps([]);
+      setDistanceMeters(null);
+      setDurationSeconds(null);
+      setDestination(null);
+      setRecommendedFuelStop(null);
+      setHasVisitedFuelStop(false);
+    } finally {
+      setIsLoadingRoute(false);
+    }
+  };
+
+  const handleToggleNavigation = async () => {
     if (!destination || routeCoords.length < 2) {
       Alert.alert('Reitti puuttuu', 'Hae reitti ennen navigoinnin aloitusta.');
       return;
     }
 
     const nextValue = !isNavigating;
+
+    if (nextValue && !recommendedFuelStop) {
+      let latestProfilePreferences = profilePreferences;
+
+      try {
+        latestProfilePreferences = await refreshProfilePreferences();
+      } catch (error) {
+        console.error('Failed to refresh profile preferences before navigation start', error);
+      }
+
+      const vehicleSettingsMessage = getVehicleSettingsMessage(latestProfilePreferences);
+
+      if (vehicleSettingsMessage) {
+        Alert.alert('Aseta kulutus', vehicleSettingsMessage);
+        return;
+      }
+
+      if (currentLocationRef.current) {
+        setIsLoadingRoute(true);
+        try {
+          await planRouteWithOptionalFuelStop(currentLocationRef.current, destination, false);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : 'Reitin päivitys epäonnistui.';
+          Alert.alert('Virhe', message);
+          setIsLoadingRoute(false);
+          return;
+        } finally {
+          setIsLoadingRoute(false);
+        }
+      }
+    }
+
     setIsNavigating(nextValue);
     setIsFollowing(true);
 
@@ -1053,6 +1208,9 @@ export default function MapScreen({ user }: MapScreenProps) {
           onRecenter={handleRecenter}
           onSearchRoute={() => {
             void handleSearchRoute();
+          }}
+          onSelectGasStation={(coordinate, stationName) => {
+            void handleSelectGasStation(coordinate, stationName);
           }}
           onToggleNavigation={handleToggleNavigation}
           routeBannerSubtitle={routeBannerSubtitle}

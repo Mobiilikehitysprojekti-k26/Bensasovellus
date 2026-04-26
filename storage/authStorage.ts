@@ -27,6 +27,11 @@ export async function clearAuthToken(): Promise<void> {
   await AsyncStorage.removeItem(AUTH_TOKEN_KEY);
 }
 
+export async function getAuthToken(): Promise<string | null> {
+  const token = await AsyncStorage.getItem(AUTH_TOKEN_KEY);
+  return token && token.trim().length > 0 ? token : null;
+}
+
 export async function setSessionActive(isActive: boolean): Promise<void> {
   await AsyncStorage.setItem(SESSION_ACTIVE_KEY, isActive ? 'true' : 'false');
 }

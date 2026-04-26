@@ -20,6 +20,15 @@ function formatDate(value: string): string {
   return new Date(value).toLocaleDateString("fi-FI");
 }
 
+function getPositiveSavings(entry: RefuelEntry): number {
+  const savings = entry.economics?.userSavingsEuro;
+  return typeof savings === "number" && Number.isFinite(savings) ? Math.max(savings, 0) : 0;
+}
+
+function formatSavings(value: number): string {
+  return `${value.toFixed(2)}€`;
+}
+
 export default function RefuelHistory({ navigation }: RefuelHistoryProps) {
   const [history, setHistory] = useState<RefuelEntry[]>([]);
   const [showAll, setShowAll] = useState(false);
@@ -78,6 +87,7 @@ export default function RefuelHistory({ navigation }: RefuelHistoryProps) {
 
   const totalSpent = monthEntries.reduce((sum, entry) => sum + entry.totalPrice, 0);
   const totalLiters = monthEntries.reduce((sum, entry) => sum + entry.liters, 0);
+  const totalSavings = monthEntries.reduce((sum, entry) => sum + getPositiveSavings(entry), 0);
   const avgPrice = totalLiters > 0 ? totalSpent / totalLiters : 0;
 
   const visibleHistory = showAll ? history : history.slice(0, INITIAL_VISIBLE_ITEMS);
@@ -149,6 +159,17 @@ export default function RefuelHistory({ navigation }: RefuelHistoryProps) {
                     <Text style={styles.summaryStatLabel}>Keskihinta</Text>
                     <Text style={styles.summaryStatValue}>{avgPrice.toFixed(2)} €/l</Text>
                   </View>
+                </View>
+              </View>
+
+              <View style={styles.savingsSummaryRow}>
+                <View style={styles.summaryIconCircle}>
+                  <MaterialCommunityIcons color={brandColors.forestSoft} name="piggy-bank-outline" size={21} />
+                </View>
+
+                <View>
+                  <Text style={styles.summaryStatLabel}>Säästö</Text>
+                  <Text style={styles.summaryStatValue}>{formatSavings(totalSavings)}</Text>
                 </View>
               </View>
             </View>
@@ -225,6 +246,15 @@ export default function RefuelHistory({ navigation }: RefuelHistoryProps) {
                 <Text style={styles.metricValue}>{item.pricePerLiter.toFixed(2)} €/l</Text>
               </View>
             </View>
+
+            {getPositiveSavings(item) > 0 ? (
+              <View style={styles.entrySavingsRow}>
+                <MaterialCommunityIcons color="#0A7A3B" name="piggy-bank-outline" size={17} />
+                <Text style={styles.entrySavingsText}>
+                  Säästetty: {formatSavings(getPositiveSavings(item))}
+                </Text>
+              </View>
+            ) : null}
           </TouchableOpacity>
         )}
       />
@@ -321,6 +351,14 @@ const styles = StyleSheet.create({
   summaryBottom: {
     flexDirection: "row",
     justifyContent: "space-between",
+  },
+  savingsSummaryRow: {
+    alignItems: "center",
+    borderTopColor: "#E8E8E3",
+    borderTopWidth: 1,
+    flexDirection: "row",
+    marginTop: 16,
+    paddingTop: 14,
   },
   summaryStatBlock: {
     alignItems: "center",
@@ -452,6 +490,22 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     marginLeft: 54,
     marginTop: 10,
+  },
+  entrySavingsRow: {
+    alignItems: "center",
+    backgroundColor: "#EAFBF2",
+    borderRadius: 12,
+    flexDirection: "row",
+    marginLeft: 54,
+    marginTop: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  entrySavingsText: {
+    color: "#0A7A3B",
+    fontSize: 13,
+    fontWeight: "800",
+    marginLeft: 6,
   },
   metricBlock: {
     marginRight: 20,

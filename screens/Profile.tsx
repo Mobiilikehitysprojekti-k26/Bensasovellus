@@ -253,7 +253,8 @@ export default function ProfileScreen({
       (entry) =>
         entry.economics?.status === 'ok' &&
         typeof entry.economics.userSavingsEuro === 'number' &&
-        Number.isFinite(entry.economics.userSavingsEuro)
+        Number.isFinite(entry.economics.userSavingsEuro) &&
+        entry.economics.userSavingsEuro > 0
     );
 
     const monthlyEntries = evaluatedEntries.filter((entry) => {
@@ -261,15 +262,15 @@ export default function ProfileScreen({
       return entryDate.getMonth() === currentMonth && entryDate.getFullYear() === currentYear;
     });
 
-    const reducePositiveSavings = (sum: number, entry: RefuelEntry) =>
-      sum + Math.max(entry.economics?.userSavingsEuro ?? 0, 0);
+    const reduceSavings = (sum: number, entry: RefuelEntry) =>
+      sum + (entry.economics?.userSavingsEuro ?? 0);
 
     return {
       hasMonthlySavingsData: monthlyEntries.length > 0,
       hasTotalSavingsData: evaluatedEntries.length > 0,
-      monthlySavings: monthlyEntries.reduce(reducePositiveSavings, 0),
+      monthlySavings: monthlyEntries.reduce(reduceSavings, 0),
       monthlySavingsEntryCount: monthlyEntries.length,
-      totalSavings: evaluatedEntries.reduce(reducePositiveSavings, 0),
+      totalSavings: evaluatedEntries.reduce(reduceSavings, 0),
       totalSavingsEntryCount: evaluatedEntries.length,
     };
   }, [refuelHistory]);
