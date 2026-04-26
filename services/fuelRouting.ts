@@ -8,7 +8,7 @@ import {
 const FUEL_API_BASE_URL = 'http://204.168.156.110:3000/api/fuel';
 const FUEL_API_KEY = '01102FFA595F2B91';
 const EXACT_ROUTE_CONCURRENCY = 2;
-const MAX_EXACT_CANDIDATES = 8;
+const MAX_EXACT_CANDIDATES = 12;
 const MAX_CORRIDOR_DISTANCE_METERS = 2500;
 const BASELINE_CORRIDOR_DISTANCE_METERS = 900;
 const ROAD_DISTANCE_ESTIMATE_FACTOR = 1.18;
@@ -256,6 +256,31 @@ function resolveStationCandidates(
   return resolvedStations;
 }
 
+function compareEvaluatedFuelStops(
+  left: Pick<
+    RecommendedFuelStop,
+    'detourDistanceMeters' | 'estimatedNetSavingsEuro' | 'estimatedTripFuelCost' | 'price'
+  >,
+  right: Pick<
+    RecommendedFuelStop,
+    'detourDistanceMeters' | 'estimatedNetSavingsEuro' | 'estimatedTripFuelCost' | 'price'
+  >
+): number {
+  if (left.estimatedNetSavingsEuro !== right.estimatedNetSavingsEuro) {
+    return right.estimatedNetSavingsEuro - left.estimatedNetSavingsEuro;
+  }
+
+  if (left.price !== right.price) {
+    return left.price - right.price;
+  }
+
+  if (left.detourDistanceMeters !== right.detourDistanceMeters) {
+    return left.detourDistanceMeters - right.detourDistanceMeters;
+  }
+
+  return left.estimatedTripFuelCost - right.estimatedTripFuelCost;
+}
+
 export async function findBestFuelStop(params: {
   baseRoute: DrivingRoute;
   combinedConsumption: number;
@@ -449,7 +474,7 @@ export async function findBestFuelStop(params: {
     return null;
   }
 
-  const prioritizedStations = detourFilteredCandidates
+  const rankedStations = detourFilteredCandidates
     .map((station) => {
       const expectedPumpSavingsEuro = Math.max(
         0,
@@ -467,24 +492,12 @@ export async function findBestFuelStop(params: {
         estimatedNetSavingsEuro,
       } satisfies EvaluatedFuelStop;
     })
-    .filter((station) => station.estimatedNetSavingsEuro >= MIN_NET_SAVINGS_EURO)
-    .sort((left, right) => {
-      if (left.estimatedNetSavingsEuro !== right.estimatedNetSavingsEuro) {
-        return right.estimatedNetSavingsEuro - left.estimatedNetSavingsEuro;
-      }
+    .sort(compareEvaluatedFuelStops);
+  const savingStations = rankedStations.filter(
+    (station) => station.estimatedNetSavingsEuro >= MIN_NET_SAVINGS_EURO
+  );
 
-      if (left.price !== right.price) {
-        return left.price - right.price;
-      }
-
-      if (left.detourDistanceMeters !== right.detourDistanceMeters) {
-        return left.detourDistanceMeters - right.detourDistanceMeters;
-      }
-
-      return left.estimatedTripFuelCost - right.estimatedTripFuelCost;
-    });
-
-  return prioritizedStations[0] ?? null;
+  return savingStations[0] ?? rankedStations[0] ?? null;
 }
 
 export function getFuelStopDisplayName(

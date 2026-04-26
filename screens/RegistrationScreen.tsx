@@ -6,14 +6,75 @@ import type { RegisteredUser } from '../storage/authStorage';
 import { brandColors } from '../theme';
 
 const API_URL = 'http://204.168.156.110:3000/auth/register';
+const LOGIN_API_URL = 'http://204.168.156.110:3000/auth/login';
 interface RegistrationScreenProps {
   onBack: () => void;
-  onRegistered: (user: RegisteredUser) => Promise<void> | void;
+  onRegistered: (user: RegisteredUser, token?: string) => Promise<void> | void;
 }
 
 interface RegisterErrorPayload {
   message?: string | string[];
   error?: string;
+  [key: string]: unknown;
+}
+
+function getRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return null;
+  }
+
+  return value as Record<string, unknown>;
+}
+
+function getStringValue(record: Record<string, unknown> | null, keys: string[]): string | null {
+  if (!record) {
+    return null;
+  }
+
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === 'string' && value.trim().length > 0) {
+      return value.trim();
+    }
+  }
+
+  return null;
+}
+
+function extractToken(payload: unknown): string | undefined {
+  const root = getRecord(payload);
+  const data = getRecord(root?.data);
+  const user = getRecord(root?.user);
+  const dataUser = getRecord(data?.user);
+
+  for (const record of [root, data, user, dataUser]) {
+    const token = getStringValue(record, ['access_token', 'accessToken', 'token']);
+    if (token) {
+      return token;
+    }
+  }
+
+  return undefined;
+}
+
+async function loginAfterRegistration(email: string, password: string): Promise<string | undefined> {
+  const response = await fetch(LOGIN_API_URL, {
+    method: 'POST',
+    headers: {
+      Accept: 'application/json',
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ email, password }),
+  });
+
+  const rawResponse = await response.text();
+  const parsedResponse = rawResponse ? JSON.parse(rawResponse) : null;
+
+  if (!response.ok) {
+    return undefined;
+  }
+
+  return extractToken(parsedResponse);
 }
 
 function getApiErrorMessage(payload: RegisterErrorPayload | null, status: number): string {
@@ -108,12 +169,15 @@ export default function RegistrationScreen({ onBack, onRegistered }: Registratio
         throw new Error(getApiErrorMessage(parsedResponse, response.status));
       }
 
+      const tokenFromRegister = extractToken(parsedResponse);
+      const token = tokenFromRegister ?? (await loginAfterRegistration(payload.email, password));
+
       await onRegistered({
         username: payload.username,
         firstName: payload.first_name,
         lastName: payload.last_name,
         email: payload.email,
-      });
+      }, token);
     } catch (error) {
       if (error instanceof SyntaxError) {
         setErrorMessage('Palvelin palautti odottamattoman vastauksen.');

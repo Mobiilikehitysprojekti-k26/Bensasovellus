@@ -30,7 +30,7 @@ import {
   type RefuelEconomics,
   type RefuelEntry,
 } from "../storage/refuelStorage";
-import { getRegisteredUser } from "../storage/authStorage";
+import { getAuthToken, getRegisteredUser } from "../storage/authStorage";
 import { getProfilePreferences } from "../storage/profileStorage";
 import {
   calculateRefuelEconomics,
@@ -39,6 +39,7 @@ import {
 import { brandColors } from "../theme";
 
 const STATION_API_URL = "http://204.168.156.110:3000/api/all";
+const USER_REFUELS_API_URL = "http://204.168.156.110:3000/api/me/refuels";
 const FALLBACK_STATIONS = [
   "ABC Kaakkuri",
   "Neste Limingantulli",
@@ -51,6 +52,23 @@ const NUMERIC_KEYBOARD_ACCESSORY_ID = "add-refuel-numeric-keyboard";
 type StationApiItem = {
   station_name?: string | null;
 };
+
+function formatApiDate(value: string): string {
+  const date = new Date(value);
+  const day = String(date.getDate()).padStart(2, "0");
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const year = date.getFullYear();
+
+  return `${day}.${month}.${year}`;
+}
+
+function formatApiTime(value: string): string {
+  const date = new Date(value);
+  const hours = String(date.getHours()).padStart(2, "0");
+  const minutes = String(date.getMinutes()).padStart(2, "0");
+
+  return `${hours}:${minutes}`;
+}
 
 function normalizeFuelType(value: string): RefuelEconomicsFuelType | null {
   const normalizedValue = value.trim().toLowerCase();
@@ -150,6 +168,37 @@ async function resolveRefuelEconomics(params: {
       liters: params.liters,
       selectedStationName: params.station,
     });
+  }
+}
+
+async function syncRefuelToApi(entry: RefuelEntry): Promise<void> {
+  const token = await getAuthToken();
+
+  if (!token) {
+    return;
+  }
+
+  const response = await fetch(USER_REFUELS_API_URL, {
+    method: "POST",
+    headers: {
+      Accept: "application/json",
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      date: formatApiDate(entry.date),
+      fuel_type: normalizeFuelType(entry.fuelType) ?? entry.fuelType,
+      liters: entry.liters,
+      price_per_liter: entry.pricePerLiter,
+      station_name: entry.station,
+      time: formatApiTime(entry.date),
+      total_amount: entry.totalPrice,
+    }),
+  });
+
+  if (!response.ok) {
+    const responseBody = await response.text();
+    throw new Error(`Refuel sync failed (${response.status}): ${responseBody}`);
   }
 }
 
@@ -350,6 +399,12 @@ export default function AddRefuel({ navigation, route }: any) {
       await updateRefuel(editingId, entryData);
     } else {
       await saveRefuel(entryData);
+    }
+
+    try {
+      await syncRefuelToApi(entryData);
+    } catch (error) {
+      console.error("Failed to sync refuel to API", error);
     }
 
     navigation.navigate("RefuelHistory");

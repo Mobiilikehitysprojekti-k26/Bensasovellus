@@ -217,6 +217,18 @@ function findSelectedStationCandidate(
   return matches.sort((first, second) => first.distanceMeters - second.distanceMeters)[0];
 }
 
+function createManualSelectedCandidate(input: CalculateRefuelEconomicsInput): RefuelCandidate {
+  const displayName = input.selectedStationName.trim() || 'Valittu asema';
+
+  return {
+    distanceMeters: 0,
+    displayName,
+    normalizedDisplayName: normalizeStationName(displayName),
+    normalizedStationName: normalizeStationName(displayName),
+    pricePerLiter: input.actualPricePerLiter,
+  };
+}
+
 async function fetchFuelStations(fuelType: RefuelEconomicsFuelType): Promise<FuelApiStation[]> {
   const apiKey = process.env.EXPO_PUBLIC_DATABASE_API_KEY?.trim() || FALLBACK_API_KEY;
   const response = await fetch(`${FUEL_API_BASE_URL}/${fuelType}`, {
@@ -267,14 +279,10 @@ export async function calculateRefuelEconomics(
       input.selectedStationName
     );
 
-    if (!selectedDistanceCandidate && !selectedPriceOnlyCandidate) {
-      return createFallbackEconomics('station_not_matched', input.origin);
-    }
-
     const useDistanceAwareMode = Boolean(input.origin && selectedDistanceCandidate);
     const selectedCandidate = useDistanceAwareMode
       ? selectedDistanceCandidate!
-      : selectedPriceOnlyCandidate!;
+      : selectedPriceOnlyCandidate ?? createManualSelectedCandidate(input);
     const benchmarkSource = useDistanceAwareMode ? candidatePool : allPriceCandidates;
     const benchmarkCandidate = [...benchmarkSource].sort(
       (first, second) => first.pricePerLiter - second.pricePerLiter

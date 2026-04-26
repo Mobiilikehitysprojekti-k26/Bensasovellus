@@ -1,4 +1,4 @@
-import { useEffect, useState, type RefObject } from 'react';
+import { useEffect, useMemo, useState, type RefObject } from 'react';
 import {
   ActivityIndicator,
   Platform,
@@ -9,17 +9,39 @@ import {
   View,
 } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import MapView, { Marker, Polyline, UrlTile, type LatLng } from 'react-native-maps';
+import MapView, {
+  Callout,
+  Marker,
+  Polyline,
+  UrlTile,
+  type LatLng,
+} from 'react-native-maps';
 import type { RecommendedFuelStop } from '../services/fuelRouting';
 import { brandColors } from '../theme';
 import { Image } from 'react-native';
 import { getStationLogo } from '../utils/getStationLogo';
 
 type GasStation = {
+  fuel_type?: string | null;
   station_id?: string;
   station_name?: string;
   lat: number;
   lon: number;
+  price?: number | null;
+  updated_text?: string | null;
+};
+
+type StationPrice = {
+  fuelType: string;
+  price: number | null;
+  updatedText?: string | null;
+};
+
+type GasStationGroup = {
+  coordinate: LatLng;
+  id: string;
+  prices: StationPrice[];
+  stationName: string;
 };
 
 type NavigationInstruction = {
@@ -53,7 +75,8 @@ interface MapProps {
   onPanMap: () => void;
   onRecenter: () => void;
   onSearchRoute: () => void;
-  onToggleNavigation: () => void;
+  onSelectGasStation: (coordinate: LatLng, stationName: string) => void;
+  onToggleNavigation: () => Promise<void> | void;
   routeBannerSubtitle: string;
   routeBannerTitle: string;
   routeCoords: LatLng[];
@@ -67,6 +90,85 @@ const initialDelta = {
 
 const floatingRestoreBottom = 8;
 const recenterTopOffset = 98;
+
+function getFuelSortOrder(fuelType: string): number {
+  const normalizedFuelType = fuelType.toLowerCase();
+
+  if (normalizedFuelType === '95') return 0;
+  if (normalizedFuelType === '98') return 1;
+  if (normalizedFuelType === 'diesel') return 2;
+
+  return 999;
+}
+
+function formatStationPrice(price: number | null): string {
+  return typeof price === 'number' && Number.isFinite(price) ? `${price.toFixed(3)} EUR` : 'Ei hintaa';
+}
+
+function createStationGroupKey(station: GasStation): string {
+  const stationName = station.station_name?.trim().toLowerCase() ?? 'asema';
+  return `${stationName}/${station.lat.toFixed(5)}/${station.lon.toFixed(5)}`;
+}
+
+function groupGasStations(stations: GasStation[]): GasStationGroup[] {
+  const groupedStations = new globalThis.Map<string, GasStationGroup>();
+
+  for (const station of stations) {
+    if (
+      typeof station.lat !== 'number' ||
+      typeof station.lon !== 'number' ||
+      !Number.isFinite(station.lat) ||
+      !Number.isFinite(station.lon)
+    ) {
+      continue;
+    }
+
+    const key = createStationGroupKey(station);
+    const existingGroup = groupedStations.get(key);
+    const stationName = station.station_name?.trim() || 'Huoltoasema';
+    const group =
+      existingGroup ??
+      {
+        coordinate: {
+          latitude: station.lat,
+          longitude: station.lon,
+        },
+        id: station.station_id ?? key,
+        prices: [],
+        stationName,
+      };
+
+    const fuelType = station.fuel_type?.trim();
+
+    if (fuelType) {
+      const price = typeof station.price === 'number' && Number.isFinite(station.price) ? station.price : null;
+      const existingPrice = group.prices.find((item) => item.fuelType === fuelType);
+
+      if (!existingPrice) {
+        group.prices.push({
+          fuelType,
+          price,
+          updatedText: station.updated_text,
+        });
+      } else if (
+        price !== null &&
+        (existingPrice.price === null || price < existingPrice.price)
+      ) {
+        existingPrice.price = price;
+        existingPrice.updatedText = station.updated_text;
+      }
+    }
+
+    groupedStations.set(key, group);
+  }
+
+  return [...groupedStations.values()].map((station) => ({
+    ...station,
+    prices: [...station.prices].sort(
+      (left, right) => getFuelSortOrder(left.fuelType) - getFuelSortOrder(right.fuelType)
+    ),
+  }));
+}
 
 function getInstructionIconName(
   instructionType: number | null | undefined
@@ -119,6 +221,7 @@ export default function Map({
   onPanMap,
   onRecenter,
   onSearchRoute,
+  onSelectGasStation,
   onToggleNavigation,
   routeBannerSubtitle,
   routeBannerTitle,
@@ -138,26 +241,20 @@ export default function Map({
   const navigationIconName = getInstructionIconName(navigationInstruction?.type);
   const shouldShowBottomCard = !isNavigating || !isNavigationPanelHidden;
   const shouldShowRestoreButton = isNavigating && isNavigationPanelHidden;
-  const validStations = (gasStations ?? []).filter(
-    (s) =>
-      typeof s.lat === "number" &&
-      typeof s.lon === "number" &&
-      Number.isFinite(s.lat) &&
-      Number.isFinite(s.lon)
-  );
+  const stationGroups = useMemo(() => groupGasStations(gasStations ?? []), [gasStations]);
   const [mapReady, setMapReady] = useState<boolean>(false);
   const [regionReady, setRegionReady] = useState<boolean>(false);
   const [freezeMarkers, setFreezeMarkers] = useState<boolean>(false);
 
   useEffect(() => {
-    if (validStations.length > 0) {
+    if (stationGroups.length > 0) {
       const timer = setTimeout(() => {
         setFreezeMarkers(true);
       }, 500);
 
       return () => clearTimeout(timer);
     }
-  }, [validStations.length]);
+  }, [stationGroups.length]);
 
   return (
     <View style={styles.container}>
@@ -225,24 +322,52 @@ export default function Map({
           </Marker>
         ) : null}
 
-        {validStations.map((station, index) => (
+        {stationGroups.map((station) => (
           <Marker
-            key={station.station_id ?? `${station.lat}-${station.lon}-${index}`}
-            coordinate={{
-              latitude: station.lat,
-              longitude: station.lon,
-            }}
-            title={station.station_name}
+            key={station.id}
+            coordinate={station.coordinate}
             tracksViewChanges={!freezeMarkers}
           >
             <View style={styles.gasStationMarkerOuter}>
               <Image 
-                source={getStationLogo(station.station_name)}
+                source={getStationLogo(station.stationName)}
                 style={{ width: 22, height: 22 }}
                 resizeMode='contain'
               />
-              {/* <MaterialCommunityIcons color="#FFFFFF" name="gas-station" size={14} /> */}
             </View>
+            <Callout
+              onPress={() => onSelectGasStation(station.coordinate, station.stationName)}
+              tooltip
+            >
+              <View style={styles.stationCallout}>
+                <Text numberOfLines={2} style={styles.stationCalloutTitle}>
+                  {station.stationName}
+                </Text>
+
+                {station.prices.length > 0 ? (
+                  station.prices.map((price) => (
+                    <View key={price.fuelType} style={styles.stationPriceRow}>
+                      <Text style={styles.stationFuelType}>{price.fuelType}</Text>
+                      <Text style={styles.stationFuelPrice}>{formatStationPrice(price.price)}</Text>
+                    </View>
+                  ))
+                ) : (
+                  <Text style={styles.stationNoPrices}>Hintoja ei saatavilla</Text>
+                )}
+
+                <View style={styles.stationCalloutFooter}>
+                  {station.prices[0]?.updatedText ? (
+                    <Text numberOfLines={1} style={styles.stationUpdatedText}>
+                      Päivitetty: {station.prices[0].updatedText}
+                    </Text>
+                  ) : null}
+
+                  <View style={styles.stationNavigateButton}>
+                    <Text style={styles.stationNavigateButtonText}>Tankkaa täällä</Text>
+                  </View>
+                </View>
+              </View>
+            </Callout>
           </Marker>
         ))}
 
@@ -729,5 +854,61 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     borderWidth: 1,
     borderColor: '#000000'
+  },
+  stationCallout: {
+    backgroundColor: '#FFFFFF',
+    borderColor: brandColors.lightMint,
+    borderRadius: 12,
+    borderWidth: 1,
+    minWidth: 190,
+    padding: 12,
+  },
+  stationCalloutTitle: {
+    color: brandColors.forest,
+    fontSize: 15,
+    fontWeight: '800',
+    marginBottom: 8,
+  },
+  stationCalloutFooter: {
+    marginTop: 8,
+  },
+  stationFuelPrice: {
+    color: brandColors.forest,
+    fontSize: 14,
+    fontWeight: '800',
+  },
+  stationFuelType: {
+    color: brandColors.forestSoft,
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  stationNoPrices: {
+    color: brandColors.forestSoft,
+    fontSize: 13,
+    lineHeight: 18,
+  },
+  stationNavigateButton: {
+    alignItems: 'center',
+    backgroundColor: '#1ED35B',
+    borderRadius: 10,
+    justifyContent: 'center',
+    marginTop: 8,
+    minHeight: 38,
+    paddingHorizontal: 12,
+  },
+  stationNavigateButtonText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '800',
+  },
+  stationPriceRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginTop: 4,
+  },
+  stationUpdatedText: {
+    color: '#64748B',
+    fontSize: 11,
   },
 });

@@ -24,6 +24,7 @@ import {
   type RegisteredUser,
 } from './storage/authStorage';
 import { clearProfilePreferences } from './storage/profileStorage';
+import { clearRefuelHistory } from './storage/refuelStorage';
 import { appTheme, brandColors } from './theme';
 
 type AuthStatus = 'authenticated' | 'loading' | 'unauthenticated';
@@ -57,9 +58,13 @@ export default function App() {
     void loadStoredUser();
   }, []);
 
-  const handleRegistrationComplete = async (user: RegisteredUser) => {
+  const handleRegistrationComplete = async (user: RegisteredUser, token?: string) => {
     await saveRegisteredUser(user);
-    await clearAuthToken();
+    if (token) {
+      await saveAuthToken(token);
+    } else {
+      await clearAuthToken();
+    }
     await setSessionActive(true);
     setRegisteredUser(user);
     setAuthStatus('authenticated');
@@ -86,6 +91,7 @@ export default function App() {
   const handleDeleteAccount = async () => {
     if (registeredUser?.email) {
       await clearProfilePreferences(registeredUser.email);
+      await clearRefuelHistory(registeredUser.email);
     }
     await clearRegisteredUser();
     await clearAuthToken();
