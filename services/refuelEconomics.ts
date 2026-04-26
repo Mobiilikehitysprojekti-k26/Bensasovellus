@@ -30,7 +30,7 @@ export interface CalculateRefuelEconomicsInput {
   combinedConsumption: number;
   fuelType: RefuelEconomicsFuelType;
   liters: number;
-  origin: {
+  origin?: {
     latitude: number;
     longitude: number;
   };
@@ -133,7 +133,7 @@ function hasValidPrice(station: FuelApiStation): station is FuelApiStation & { p
   return typeof station.price === 'number' && Number.isFinite(station.price) && station.price > 0;
 }
 
-function createCandidate(
+function createDistanceCandidate(
   origin: { latitude: number; longitude: number },
   station: FuelApiStation
 ): RefuelCandidate | null {
@@ -154,6 +154,28 @@ function createCandidate(
       latitude: station.lat,
       longitude: station.lon,
     }),
+    displayName,
+    normalizedDisplayName: normalizeStationName(displayName),
+    normalizedStationName: normalizeStationName(stationName),
+    pricePerLiter: station.price,
+  };
+}
+
+function createPriceOnlyCandidate(station: FuelApiStation): RefuelCandidate | null {
+  if (!hasValidPrice(station)) {
+    return null;
+  }
+
+  const stationName = station.station_name?.trim();
+  if (!stationName) {
+    return null;
+  }
+
+  const matchedStationName = station.matched_station_name?.trim();
+  const displayName = matchedStationName || stationName;
+
+  return {
+    distanceMeters: 0,
     displayName,
     normalizedDisplayName: normalizeStationName(displayName),
     normalizedStationName: normalizeStationName(stationName),
@@ -222,30 +244,48 @@ export async function calculateRefuelEconomics(
 ): Promise<RefuelEconomics> {
   try {
     const stations = await fetchFuelStations(input.fuelType);
-    const allCandidates = stations
-      .map((station) => createCandidate(input.origin, station))
+    const allPriceCandidates = stations
+      .map((station) => createPriceOnlyCandidate(station))
       .filter((candidate): candidate is RefuelCandidate => Boolean(candidate));
-    const candidatePool = pickCandidatePool(allCandidates);
 
-    if (candidatePool.length === 0) {
+    if (allPriceCandidates.length === 0) {
       return createFallbackEconomics('network_error', input.origin);
     }
 
-    const selectedCandidate = findSelectedStationCandidate(candidatePool, input.selectedStationName);
-    if (!selectedCandidate) {
+    const allDistanceCandidates = input.origin
+      ? stations
+          .map((station) => createDistanceCandidate(input.origin!, station))
+          .filter((candidate): candidate is RefuelCandidate => Boolean(candidate))
+      : [];
+    const candidatePool = pickCandidatePool(allDistanceCandidates);
+    const selectedDistanceCandidate = findSelectedStationCandidate(
+      candidatePool,
+      input.selectedStationName
+    );
+    const selectedPriceOnlyCandidate = findSelectedStationCandidate(
+      allPriceCandidates,
+      input.selectedStationName
+    );
+
+    if (!selectedDistanceCandidate && !selectedPriceOnlyCandidate) {
       return createFallbackEconomics('station_not_matched', input.origin);
     }
 
-    const benchmarkCandidate = [...candidatePool].sort(
+    const useDistanceAwareMode = Boolean(input.origin && selectedDistanceCandidate);
+    const selectedCandidate = useDistanceAwareMode
+      ? selectedDistanceCandidate!
+      : selectedPriceOnlyCandidate!;
+    const benchmarkSource = useDistanceAwareMode ? candidatePool : allPriceCandidates;
+    const benchmarkCandidate = [...benchmarkSource].sort(
       (first, second) => first.pricePerLiter - second.pricePerLiter
     )[0];
     const actualTravelCost = calculateTravelCost(
-      selectedCandidate.distanceMeters,
+      useDistanceAwareMode ? selectedCandidate.distanceMeters : 0,
       input.combinedConsumption,
       input.actualPricePerLiter
     );
     const benchmarkTravelCost = calculateTravelCost(
-      benchmarkCandidate.distanceMeters,
+      useDistanceAwareMode ? benchmarkCandidate.distanceMeters : 0,
       input.combinedConsumption,
       benchmarkCandidate.pricePerLiter
     );
@@ -258,8 +298,8 @@ export async function calculateRefuelEconomics(
       benchmarkStationName: benchmarkCandidate.displayName,
       evaluatedAt: new Date().toISOString(),
       naiveCheapestPumpTotalCost,
-      origin: input.origin,
-      selectedStationDistanceMeters: selectedCandidate.distanceMeters,
+      origin: useDistanceAwareMode ? input.origin : undefined,
+      selectedStationDistanceMeters: useDistanceAwareMode ? selectedCandidate.distanceMeters : undefined,
       status: 'ok',
       userSavingsEuro: naiveCheapestPumpTotalCost - actualTotalCost,
       version: 1,

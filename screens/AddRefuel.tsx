@@ -117,7 +117,13 @@ async function resolveRefuelEconomics(params: {
   try {
     const permission = await Location.requestForegroundPermissionsAsync();
     if (permission.status !== "granted") {
-      return createEconomicsFallback("missing_location");
+      return await calculateRefuelEconomics({
+        actualPricePerLiter: params.actualPricePerLiter,
+        combinedConsumption,
+        fuelType: normalizedFuelType,
+        liters: params.liters,
+        selectedStationName: params.station,
+      });
     }
 
     const currentPosition = await Location.getCurrentPositionAsync({
@@ -137,7 +143,13 @@ async function resolveRefuelEconomics(params: {
     });
   } catch (error) {
     console.error("Failed to resolve location for refuel economics", error);
-    return createEconomicsFallback("missing_location");
+    return await calculateRefuelEconomics({
+      actualPricePerLiter: params.actualPricePerLiter,
+      combinedConsumption,
+      fuelType: normalizedFuelType,
+      liters: params.liters,
+      selectedStationName: params.station,
+    });
   }
 }
 

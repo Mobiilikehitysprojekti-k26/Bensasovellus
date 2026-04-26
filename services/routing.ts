@@ -48,6 +48,16 @@ type OpenRouteServiceSnapLocation = {
   snapped_distance?: number;
 };
 
+export class RouteRequestError extends Error {
+  statusCode: number;
+
+  constructor(message: string, statusCode: number) {
+    super(message);
+    this.name = 'RouteRequestError';
+    this.statusCode = statusCode;
+  }
+}
+
 export type DrivingRouteStep = {
   distanceMeters: number;
   durationSeconds: number;
@@ -84,7 +94,7 @@ function createDrivingRouteSteps(segments: OpenRouteServiceSegment[] | undefined
       steps.push({
         distanceMeters: step.distance ?? 0,
         durationSeconds: step.duration ?? 0,
-        instruction: step.instruction?.trim() || 'Jatka reittia pitkin.',
+        instruction: step.instruction?.trim() || 'Jatka reittiä pitkin.',
         maneuver: maneuverLocation
           ? {
               bearingAfter:
@@ -110,6 +120,43 @@ function createDrivingRouteSteps(segments: OpenRouteServiceSegment[] | undefined
   }
 
   return steps;
+}
+
+async function readRouteApiErrorMessage(response: Response): Promise<string | null> {
+  try {
+    const rawPayload = await response.text();
+
+    if (!rawPayload.trim()) {
+      return null;
+    }
+
+    const parsedPayload = JSON.parse(rawPayload) as {
+      error?: string;
+      message?: string | string[];
+    };
+
+    if (typeof parsedPayload.message === 'string' && parsedPayload.message.trim().length > 0) {
+      return parsedPayload.message.trim();
+    }
+
+    if (Array.isArray(parsedPayload.message)) {
+      const firstMessage = parsedPayload.message.find(
+        (item): item is string => typeof item === 'string' && item.trim().length > 0
+      );
+
+      if (firstMessage) {
+        return firstMessage.trim();
+      }
+    }
+
+    if (typeof parsedPayload.error === 'string' && parsedPayload.error.trim().length > 0) {
+      return parsedPayload.error.trim();
+    }
+
+    return null;
+  } catch {
+    return null;
+  }
 }
 
 function shouldUseSnappedPoint(
@@ -177,7 +224,7 @@ async function snapRouteEndpoints(points: LatLng[]): Promise<LatLng[]> {
 
 export async function fetchDrivingRouteWithWaypoints(points: LatLng[]): Promise<DrivingRoute> {
   if (points.length < 2) {
-    throw new Error('Reitin hakuun tarvitaan vahintaan alku- ja loppupiste.');
+    throw new Error('Reitin hakuun tarvitaan vähintään alku- ja loppupiste.');
   }
 
   const snappedPoints = await snapRouteEndpoints(points);
@@ -197,7 +244,13 @@ export async function fetchDrivingRouteWithWaypoints(points: LatLng[]): Promise<
   );
 
   if (!response.ok) {
-    throw new Error('Reitin haku epaonnistui. Yrita uudelleen.');
+    const apiErrorMessage = await readRouteApiErrorMessage(response);
+    const fallbackMessage =
+      response.status === 429
+        ? 'Reittipalvelu on ruuhkautunut (HTTP 429). Yritä hetken päästä uudelleen.'
+        : `Reitin haku epäonnistui (HTTP ${response.status}). Yritä uudelleen.`;
+
+    throw new RouteRequestError(apiErrorMessage ?? fallbackMessage, response.status);
   }
 
   const data = (await response.json()) as OpenRouteServiceRouteResponse;
@@ -207,7 +260,7 @@ export async function fetchDrivingRouteWithWaypoints(points: LatLng[]): Promise<
   const summary = properties?.summary;
 
   if (!geometryCoordinates?.length || !summary) {
-    throw new Error('Reittia ei loytynyt.');
+    throw new Error('Reittiä ei löytynyt.');
   }
 
   const geometry = geometryCoordinates.map(([longitude, latitude]) => ({

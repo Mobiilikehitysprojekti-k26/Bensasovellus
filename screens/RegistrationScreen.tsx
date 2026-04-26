@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
-import { KeyboardAvoidingView, Platform, StyleSheet, View } from 'react-native';
+import { KeyboardAvoidingView, Platform, ScrollView, StyleSheet, useWindowDimensions } from 'react-native';
 import { Button, HelperText, Surface, TextInput } from 'react-native-paper';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import type { RegisteredUser } from '../storage/authStorage';
 import { brandColors } from '../theme';
 
@@ -40,6 +41,7 @@ function getApiErrorMessage(payload: RegisterErrorPayload | null, status: number
 }
 
 export default function RegistrationScreen({ onBack, onRegistered }: RegistrationScreenProps) {
+  const { width } = useWindowDimensions();
   const [username, setUsername] = useState('');
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
@@ -47,6 +49,11 @@ export default function RegistrationScreen({ onBack, onRegistered }: Registratio
   const [password, setPassword] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const isCompact = width < 380;
+  const horizontalPadding = Math.max(14, Math.min(28, width * 0.06));
+  const inputSpacing = isCompact ? 10 : 14;
+  const cardPadding = isCompact ? 16 : 22;
+  const buttonHeight = isCompact ? 50 : 56;
 
   const canSubmit = useMemo(() => {
     return (
@@ -121,13 +128,26 @@ export default function RegistrationScreen({ onBack, onRegistered }: Registratio
   };
 
   return (
-    <View style={styles.container}>
+    <SafeAreaView edges={['top', 'left', 'right']} style={styles.container}>
       <KeyboardAvoidingView
         style={styles.keyboardContainer}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 12 : 0}
       >
-        <View style={styles.contentContainer}>
-          <Surface style={styles.card} elevation={2}>
+        <ScrollView
+          contentContainerStyle={[
+            styles.scrollContent,
+            {
+              justifyContent: 'center',
+              paddingHorizontal: horizontalPadding,
+              paddingVertical: isCompact ? 16 : 24,
+            },
+          ]}
+          keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+        >
+          <Surface style={[styles.card, { padding: cardPadding }]} elevation={2}>
             <TextInput
               autoCapitalize="none"
               autoCorrect={false}
@@ -146,7 +166,7 @@ export default function RegistrationScreen({ onBack, onRegistered }: Registratio
               mode="outlined"
               onChangeText={setFirstName}
               outlineStyle={styles.inputOutline}
-              style={styles.inputSpacing}
+              style={[styles.inputSpacing, { marginTop: inputSpacing }]}
               value={firstName}
             />
             <TextInput
@@ -156,7 +176,7 @@ export default function RegistrationScreen({ onBack, onRegistered }: Registratio
               mode="outlined"
               onChangeText={setLastName}
               outlineStyle={styles.inputOutline}
-              style={styles.inputSpacing}
+              style={[styles.inputSpacing, { marginTop: inputSpacing }]}
               value={lastName}
             />
             <TextInput
@@ -169,7 +189,7 @@ export default function RegistrationScreen({ onBack, onRegistered }: Registratio
               mode="outlined"
               onChangeText={setEmail}
               outlineStyle={styles.inputOutline}
-              style={styles.inputSpacing}
+              style={[styles.inputSpacing, { marginTop: inputSpacing }]}
               value={email}
             />
             <TextInput
@@ -181,7 +201,7 @@ export default function RegistrationScreen({ onBack, onRegistered }: Registratio
               onChangeText={setPassword}
               outlineStyle={styles.inputOutline}
               secureTextEntry
-              style={styles.inputSpacing}
+              style={[styles.inputSpacing, { marginTop: inputSpacing }]}
               value={password}
             />
 
@@ -191,7 +211,6 @@ export default function RegistrationScreen({ onBack, onRegistered }: Registratio
 
             <Button
               buttonColor={brandColors.mint}
-              contentStyle={styles.primaryButtonContent}
               disabled={!canSubmit || isSubmitting}
               icon="account-plus-outline"
               loading={isSubmitting}
@@ -199,6 +218,7 @@ export default function RegistrationScreen({ onBack, onRegistered }: Registratio
               onPress={handleRegister}
               style={styles.primaryButton}
               textColor={brandColors.forest}
+              contentStyle={[styles.primaryButtonContent, { minHeight: buttonHeight }]}
             >
               {'Rekister\u00F6idy'}
             </Button>
@@ -207,9 +227,9 @@ export default function RegistrationScreen({ onBack, onRegistered }: Registratio
               Takaisin
             </Button>
           </Surface>
-        </View>
+        </ScrollView>
       </KeyboardAvoidingView>
-    </View>
+    </SafeAreaView>
   );
 }
 
@@ -221,11 +241,8 @@ const styles = StyleSheet.create({
   keyboardContainer: {
     flex: 1,
   },
-  contentContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    paddingHorizontal: 20,
-    paddingVertical: 24,
+  scrollContent: {
+    flexGrow: 1,
   },
   card: {
     alignSelf: 'center',
@@ -234,7 +251,6 @@ const styles = StyleSheet.create({
     borderRadius: 32,
     borderWidth: 1,
     maxWidth: 520,
-    padding: 22,
     width: '100%',
   },
   inputOutline: {
