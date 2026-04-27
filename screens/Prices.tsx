@@ -7,6 +7,7 @@ import * as Location from 'expo-location';
 import { brandColors } from '../theme';
 import { useEffect, useState, useCallback } from 'react';
 import type { LatLng } from 'react-native-maps';
+import { getRefuelHistory, type RefuelEntry } from '../storage/refuelStorage';
 
 type FuelPrice = {
   station_name: string
@@ -119,6 +120,53 @@ function getFuelTimestamp(fuel: FuelPrice): number {
   return 0;
 }
 
+function getFuelGroupingKey(fuel: FuelPrice): string {
+  return normalizeFuelType(fuel.fuel_type) || fuel.fuel_type?.trim() || 'unknown';
+}
+
+function pickNewestFuel(current: FuelPrice, next: FuelPrice): FuelPrice {
+  const currentTimestamp = getFuelTimestamp(current);
+  const nextTimestamp = getFuelTimestamp(next);
+
+  if (nextTimestamp >= currentTimestamp) {
+    return next;
+  }
+
+  return current;
+}
+
+function groupLatestFuelPrices(fuels: FuelPrice[]): FuelPrice[] {
+  const latestByFuelType = new Map<string, FuelPrice>();
+
+  fuels.forEach((fuel) => {
+    const key = getFuelGroupingKey(fuel);
+    const current = latestByFuelType.get(key);
+    latestByFuelType.set(key, current ? pickNewestFuel(current, fuel) : fuel);
+  });
+
+  return Array.from(latestByFuelType.values());
+}
+
+function getLatestFuel(fuels: FuelPrice[] | undefined): FuelPrice | undefined {
+  if (!fuels || fuels.length === 0) {
+    return undefined;
+  }
+
+  return [...fuels].sort((first, second) => getFuelTimestamp(second) - getFuelTimestamp(first))[0];
+}
+
+function createFuelPriceFromRefuel(entry: RefuelEntry): FuelPrice {
+  return {
+    fuel_type: entry.fuelType,
+    matched_station_name: entry.station,
+    price: entry.pricePerLiter,
+    reported_at: entry.date,
+    scraped_at: null,
+    station_name: entry.station,
+    updated_text: 'Käyttäjän tankkaus',
+  };
+}
+
 function formatStoredTimestamp(value: string): string {
   return new Date(value).toLocaleString('fi-FI', {
     day: '2-digit',
@@ -169,15 +217,19 @@ export default function PricesScreen() {
     }
 
     try {
-      const response = await fetch(API_URL, {
-        headers: {
-          'x-api-key': API_KEY,
-        },
-      });
+      const [response, refuelHistory] = await Promise.all([
+        fetch(API_URL, {
+          headers: {
+            'x-api-key': API_KEY,
+          },
+        }),
+        getRefuelHistory(),
+      ]);
       const json = (await response.json()) as FuelPrice[];
+      const localFuelPrices = refuelHistory.map(createFuelPriceFromRefuel);
       const grouped: { [key: string]: FuelPrice[] } = {};
 
-      json.forEach(item => {
+      [...json, ...localFuelPrices].forEach(item => {
         const stationName = getStationDisplayName(item);
 
         if (stationName) {
@@ -188,7 +240,7 @@ export default function PricesScreen() {
 
       const result: StationGroup[] = Object.keys(grouped).map(station => ({
         station_name: station,
-        fuels: grouped[station],
+        fuels: groupLatestFuelPrices(grouped[station]),
       }));
 
       setData(result);
@@ -271,7 +323,10 @@ export default function PricesScreen() {
   );
 
   useEffect(() => {
-    let filtered = data;
+    let filtered = data.map(station => ({
+      ...station,
+      fuels: [...station.fuels],
+    }));
 
     // Filter by fuel types - show station only if it has at least one selected fuel type
     if (filters.fuelTypes.length > 0) {
@@ -285,19 +340,19 @@ export default function PricesScreen() {
 
     // Sort stations
     if (filters.sortBy === 'latest') {
-      filtered = filtered.sort((a, b) => {
+      filtered = [...filtered].sort((a, b) => {
         const latestA = a.fuels && a.fuels.length > 0 ? Math.max(...a.fuels.map(getFuelTimestamp)) : 0;
         const latestB = b.fuels && b.fuels.length > 0 ? Math.max(...b.fuels.map(getFuelTimestamp)) : 0;
         return latestB - latestA;
       });
     } else if (filters.sortBy === 'cheapest') {
-      filtered = filtered.sort((a, b) => {
+      filtered = [...filtered].sort((a, b) => {
         const avgPriceA = a.fuels && a.fuels.length > 0 ? a.fuels.reduce((sum, f) => sum + (f.price || 0), 0) / a.fuels.length : 0;
         const avgPriceB = b.fuels && b.fuels.length > 0 ? b.fuels.reduce((sum, f) => sum + (f.price || 0), 0) / b.fuels.length : 0;
         return avgPriceA - avgPriceB;
       });
     } else if (filters.sortBy === 'nearest' && currentLocation) {
-      filtered = filtered.sort((a, b) => {
+      filtered = [...filtered].sort((a, b) => {
         const distanceA = a.fuels?.[0]?.lat && a.fuels?.[0]?.lon
           ? haversineMeters(currentLocation, {
               latitude: a.fuels[0].lat,
@@ -405,14 +460,14 @@ export default function PricesScreen() {
                   </View>
 
                   {item.fuels && item.fuels.map(fuel => (
-                    <View key={fuel.fuel_type} style={styles.fuelRow}>
+                    <View key={getFuelGroupingKey(fuel)} style={styles.fuelRow}>
                       <Text style={styles.fuelType}>{formatFuelType(fuel.fuel_type)}</Text>
                       <Text style={styles.price}>{fuel.price ? Number(fuel.price).toFixed(3) : 'N/A'} €</Text>
                     </View>
                   ))}
 
                   <Text style={styles.updated}>
-                    Päivitetty: {getUpdatedText(item.fuels?.[0])}
+                    Päivitetty: {getUpdatedText(getLatestFuel(item.fuels))}
                   </Text>
                 </Card.Content>
               </Card>
